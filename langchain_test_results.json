@@ -41,7 +41,7 @@
   },
   "lm_studio_connection": {
     "available": true,
-    "api_url": "http://127.0.0.1:1239",
+    "api_url": "http://127.0.0.1:1234",
     "timestamp": "None",
     "status": "\u2705 Connected",
     "model": "llama-3.2-3b-instruct",

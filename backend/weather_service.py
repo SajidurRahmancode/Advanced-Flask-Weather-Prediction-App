@@ -49,6 +49,14 @@ except ImportError as e:
     LANGGRAPH_AVAILABLE = False
     print(f"⚠️ LangGraph service not available: {e}")
 
+# Import Ensemble service
+try:
+    from backend.ensemble_service import EnsemblePredictionService
+    ENSEMBLE_AVAILABLE = True
+except ImportError as e:
+    ENSEMBLE_AVAILABLE = False
+    print(f"⚠️ Ensemble service not available: {e}")
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -65,6 +73,7 @@ class WeatherPredictionService:
             self.lm_studio_service = None
             self.langchain_rag_service = None
             self.langgraph_service = None
+            self.ensemble_service = None
             self.llm = None
             self.gemini_available = False
             
@@ -179,7 +188,25 @@ class WeatherPredictionService:
             else:
                 logger.warning("⚠️ LangGraph service not available")
                 self.langgraph_service = None
-            
+
+            # Initialize Ensemble service (Week 4)
+            if ENSEMBLE_AVAILABLE:
+                try:
+                    self.ensemble_service = EnsemblePredictionService(
+                        lm_studio_service=self.lm_studio_service,
+                        rag_service=self.rag_service,
+                        langgraph_service=self.langgraph_service,
+                        langchain_service=self.langchain_rag_service,
+                        weather_service=self,
+                    )
+                    logger.info("🎯 Ensemble prediction service initialized successfully")
+                except Exception as e:
+                    logger.error(f"⚠️ Could not initialize Ensemble service: {e}")
+                    self.ensemble_service = None
+            else:
+                logger.warning("⚠️ Ensemble service not available")
+                self.ensemble_service = None
+
             logger.info(f"✅ Weather service initialized successfully with {len(self.data) if self.data is not None else 0} records")
             
         except Exception as e:
@@ -1313,6 +1340,73 @@ Use the historical patterns to inform your predictions while accounting for seas
         except Exception as e:
             return {"status": f"❌ Error: {str(e)}", "available": False}
     
+    # ------------------------------------------------------------------
+    # Week 4: Ensemble prediction
+    # ------------------------------------------------------------------
+
+    def predict_weather_ensemble(
+        self, location: str = "Tokyo", prediction_days: int = 3,
+        season: str = "auto", enable_multiquery: bool = True
+    ):
+        """Confidence-weighted ensemble prediction combining all available methods."""
+        try:
+            logger.info(f"🎯 Starting ensemble prediction for {location}, {prediction_days} days")
+
+            if not self.ensemble_service:
+                # Lazy initialise if missed during __init__
+                if ENSEMBLE_AVAILABLE:
+                    self.ensemble_service = EnsemblePredictionService(
+                        lm_studio_service=self.lm_studio_service,
+                        rag_service=self.rag_service,
+                        langgraph_service=self.langgraph_service,
+                        langchain_service=self.langchain_rag_service,
+                        weather_service=self,
+                    )
+                else:
+                    # Hard fallback: delegate to LangGraph
+                    logger.warning("Ensemble service unavailable – falling back to LangGraph")
+                    return self.predict_weather_with_langgraph(location, prediction_days)
+
+            result = self.ensemble_service.predict_ensemble(
+                location=location,
+                prediction_days=prediction_days,
+                season=season,
+                enable_multiquery=enable_multiquery,
+            )
+
+            if result and result.get("success"):
+                logger.info("✅ Ensemble prediction completed successfully")
+                result["timeframe"] = prediction_days
+                result["advanced_features"] = [
+                    "Multi-Method Ensemble",
+                    "Confidence-Weighted Aggregation",
+                    "Qwen3 CoT Meta-Synthesis",
+                    "Dynamic Method Selection",
+                    "Quality Filtering",
+                ]
+                return result
+            else:
+                logger.warning("Ensemble prediction returned failure – falling back to LangGraph")
+                return self.predict_weather_with_langgraph(location, prediction_days)
+
+        except Exception as e:
+            logger.error(f"❌ Ensemble prediction error: {e}")
+            try:
+                return self.predict_weather_with_langgraph(location, prediction_days)
+            except Exception:
+                return self.generate_statistical_prediction(location, prediction_days)
+
+    def get_ensemble_status(self):
+        """Get status of the ensemble prediction service."""
+        try:
+            if not self.ensemble_service:
+                return {"status": "Not initialized", "available": False}
+            return self.ensemble_service.get_status()
+        except Exception as e:
+            return {"status": f"Error: {str(e)}", "available": False}
+
+    # ------------------------------------------------------------------
+
     def get_langgraph_status(self):
         """Get detailed status of LangGraph multi-agent service"""
         try:

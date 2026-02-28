@@ -6,6 +6,40 @@ import json
 import logging
 from datetime import datetime
 
+# ---------------------------------------------------------------------------
+# Production AI/ML infrastructure
+# ---------------------------------------------------------------------------
+try:
+    from backend.auth_guard     import require_auth, get_session_user_id
+    from backend.rate_limiter   import rate_limiter
+    from backend.circuit_breaker import circuit_breakers
+    from backend.prompt_security import security_guard
+    from backend.ml_observability import observability
+    try:
+        from backend.validators import WeatherPredictionRequest, ValidationError, PYDANTIC_AVAILABLE
+    except Exception:
+        PYDANTIC_AVAILABLE = False
+        WeatherPredictionRequest = None
+        ValidationError = Exception
+    PRODUCTION_GUARDS = True
+except Exception as _prod_err:
+    PRODUCTION_GUARDS = False
+    logger_boot = logging.getLogger(__name__)
+    logger_boot.warning("Production guards not loaded: %s", _prod_err)
+    # Stub require_auth so the app still boots
+    def require_auth(f):
+        from functools import wraps
+        @wraps(f)
+        def _inner(*a, **kw):
+            from flask import session, jsonify
+            if 'user_id' not in session:
+                return jsonify({'error': 'Authentication required'}), 401
+            return f(*a, **kw)
+        return _inner
+    def get_session_user_id():
+        from flask import session
+        return session.get('user_id')
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -255,16 +289,11 @@ def test_weather_service():
         }), 500
 
 @api.route('/weather/predict', methods=['GET', 'POST'])
+@require_auth
 def predict_weather():
     """Weather prediction endpoint using LangChain and Gemini AI"""
     try:
         logger.info("🔮 Weather prediction request received")
-        
-        # Check session-based authentication
-        from flask import session
-        if 'user_id' not in session:
-            logger.warning("❌ Unauthorized weather prediction request")
-            return jsonify({'error': 'Authentication required'}), 401
         
         if weather_service is None:
             logger.error("❌ Weather service not available")
@@ -396,15 +425,11 @@ def get_recent_weather_data():
 
 @api.route('/weather/predict-rag', methods=['POST'])
 @csrf.exempt
+@require_auth
 def predict_weather_rag():
     """Enhanced weather prediction using RAG + historical patterns"""
     try:
         logger.info("🧠 RAG-enhanced weather prediction request received")
-        
-        # Check authentication
-        if 'user_id' not in session:
-            logger.warning("❌ Unauthorized RAG prediction request")
-            return jsonify({'error': 'Authentication required'}), 401
         
         if not weather_service:
             return jsonify({'error': 'Weather service not available'}), 500
@@ -531,12 +556,10 @@ def get_rag_stats():
 
 @api.route('/weather/predict-local', methods=['POST'])
 @csrf.exempt  # Exempt from CSRF for API
+@require_auth
 def predict_weather_local():
     """Local LLM weather prediction endpoint"""
     try:
-        if 'user_id' not in session:
-            return jsonify({"error": "Authentication required"}), 401
-            
         logger.info("🏠 Local LLM weather prediction request received")
         
         data = request.get_json()
@@ -574,12 +597,10 @@ def predict_weather_local():
 
 @api.route('/weather/predict-rag-local', methods=['POST'])
 @csrf.exempt  # Exempt from CSRF for API
+@require_auth
 def predict_weather_rag_local():
     """RAG + Local LLM weather prediction endpoint"""
     try:
-        if 'user_id' not in session:
-            return jsonify({"error": "Authentication required"}), 401
-            
         logger.info("🧠 RAG + Local LLM weather prediction request received")
         
         data = request.get_json()
@@ -613,13 +634,11 @@ def predict_weather_rag_local():
         }), 500
 
 @api.route('/weather/predict-hybrid', methods=['POST'])
-@csrf.exempt  # Exempt from CSRF for API  
+@csrf.exempt  # Exempt from CSRF for API
+@require_auth
 def predict_weather_hybrid():
     """Hybrid prediction endpoint with intelligent fallback"""
     try:
-        if 'user_id' not in session:
-            return jsonify({"error": "Authentication required"}), 401
-            
         logger.info("🔄 Hybrid weather prediction request received")
         
         data = request.get_json()
@@ -678,14 +697,177 @@ def get_lm_studio_status():
             'success': False
         }), 500
 
+@api.route('/weather/predict-multiquery-rag', methods=['POST'])
+@csrf.exempt  # Exempt from CSRF for API
+@require_auth
+def predict_weather_multiquery_rag():
+    """Weather prediction using enhanced Multi-Query RAG with AI-powered query generation"""
+    try:
+        logger.info("🔍 Multi-Query RAG weather prediction request received")
+        
+        # Check if services are available
+        if weather_service is None:
+            logger.error("❌ Weather service not initialized")
+            return jsonify({
+                "error": "Weather service not available",
+                "success": False
+            }), 500
+        
+        if not weather_service.rag_service or not weather_service.rag_service.is_available():
+            logger.error("❌ RAG service not available")
+            return jsonify({
+                "error": "RAG service not available",
+                "success": False
+            }), 503
+        
+        # Get request data
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        location = data.get('location', 'Tokyo')
+        days = int(data.get('days', 3))
+        season = data.get('season', None)
+        k = int(data.get('k', 10))
+        
+        # Validate inputs
+        if days < 1 or days > 14:
+            return jsonify({"error": "Days must be between 1 and 14"}), 400
+        
+        if k < 5 or k > 20:
+            k = 10  # Default to 10
+        
+        logger.info(f"🔍 Multi-Query RAG for {location}, {days} days, season={season}, k={k}")
+        
+        # Get LM Studio service for AI query generation
+        lm_studio = weather_service.lm_studio_service if weather_service.lm_studio_service and weather_service.lm_studio_service.available else None
+        
+        if lm_studio:
+            logger.info(f"✅ Using LM Studio ({lm_studio.model_name}) for AI query generation")
+        else:
+            logger.info("⚠️ LM Studio not available - using template-based query generation")
+        
+        # Perform multi-query retrieval
+        rag_result = weather_service.rag_service.multi_query_retrieval(
+            location=location,
+            days=days,
+            season=season,
+            k=k,
+            lm_studio_service=lm_studio
+        )
+        
+        # Check if we got results
+        if not rag_result['documents']:
+            logger.warning("⚠️ No documents retrieved from multi-query RAG")
+            return jsonify({
+                "error": "No relevant historical data found",
+                "query_variations": rag_result['query_variations'],
+                "success": False
+            }), 404
+        
+        # Generate prediction using LM Studio if available
+        prediction_text = ""
+        method_used = "template-based"
+        
+        if lm_studio:
+            try:
+                # Build context from top documents
+                context = "\n\n".join([
+                    f"Document {i+1}:\n{doc['content']}" 
+                    for i, doc in enumerate(rag_result['documents'][:5])
+                ])
+                
+                # Create prediction prompt
+                prompt = f"""Based on historical weather data for {location}, predict the weather for the next {days} days.
+
+Historical Context from Multiple Retrieval Queries:
+{context}
+
+Season: {season or 'current season'}
+
+Provide a detailed {days}-day forecast including:
+1. Overall weather pattern and trends
+2. Temperature range (high/low)
+3. Precipitation probability
+4. Humidity levels
+5. Wind conditions
+6. Any notable weather patterns or warnings
+
+Format your response as a clear, day-by-day forecast."""
+
+                logger.info(f"🤖 Generating prediction with {lm_studio.model_name}")
+                prediction_response = lm_studio.generate_chat(
+                    messages=[
+                        {"role": "system", "content": "You are an expert meteorologist providing accurate, detailed weather forecasts based on historical patterns."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    max_tokens=1500,
+                    temperature=0.3
+                )
+                
+                if prediction_response:
+                    prediction_text = prediction_response
+                    method_used = f"ai-powered ({lm_studio.model_name})"
+                    logger.info(f"✅ AI prediction generated: {len(prediction_text)} characters")
+                else:
+                    logger.warning("⚠️ AI prediction returned empty")
+                    prediction_text = "AI prediction unavailable - see retrieved context below"
+                    method_used = "context-only"
+                    
+            except Exception as e:
+                logger.error(f"❌ AI prediction generation failed: {e}")
+                prediction_text = f"AI prediction error: {str(e)}"
+                method_used = "error-fallback"
+        else:
+            # No LM Studio - provide summary of retrieved context
+            prediction_text = f"Retrieved {len(rag_result['documents'])} relevant historical weather patterns for {location}. See context below for details."
+            method_used = "context-only"
+        
+        # Build response
+        response = {
+            'success': True,
+            'location': location,
+            'days': days,
+            'season': season,
+            'prediction': prediction_text,
+            'rag_stats': {
+                'query_variations': rag_result['query_variations'],
+                'total_retrieved': rag_result['total_retrieved'],
+                'final_count': rag_result['final_count'],
+                'deduplication_removed': rag_result.get('deduplication', 0),
+                'ai_query_generation': lm_studio is not None,
+                'model_used': lm_studio.model_name if lm_studio else None
+            },
+            'context_samples': [
+                {
+                    'content': doc['content'][:200] + '...' if len(doc['content']) > 200 else doc['content'],
+                    'doc_type': doc.get('doc_type', 'unknown'),
+                    'source_query': doc.get('source_query', 'N/A')[:60] + '...' if doc.get('source_query', '') else 'N/A'
+                }
+                for doc in rag_result['documents'][:3]
+            ],
+            'method': f'multi-query-rag-{method_used}',
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        logger.info(f"✅ Multi-Query RAG prediction successful: {method_used}")
+        return jsonify(response), 200
+        
+    except Exception as e:
+        logger.error(f"❌ Multi-Query RAG prediction error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'error': f'Multi-Query RAG prediction failed: {str(e)}',
+            'success': False
+        }), 500
+
 @api.route('/weather/predict-langchain-rag', methods=['POST'])
 @csrf.exempt  # Exempt from CSRF for API
+@require_auth
 def predict_weather_langchain_rag():
     """Ultimate weather prediction using LangChain + RAG orchestration"""
     try:
-        if 'user_id' not in session:
-            return jsonify({"error": "Authentication required"}), 401
-            
         logger.info("🧠 LangChain + RAG weather prediction request received")
         
         # Check if weather service is available
@@ -885,12 +1067,10 @@ def get_service_overview():
         }), 500
 
 @api.route('/weather/predict-langgraph', methods=['POST'])
+@require_auth
 def predict_weather_langgraph():
     """Ultimate weather prediction using LangGraph multi-agent system"""
     try:
-        if 'user_id' not in session:
-            return jsonify({"error": "Authentication required"}), 401
-        
         logger.info("🧠 LangGraph multi-agent weather prediction request received")
         
         # Get request data
@@ -926,11 +1106,68 @@ def predict_weather_langgraph():
                 ]
             }), 503
         
-        # Get LangGraph multi-agent prediction
-        result = weather_service.predict_weather_with_langgraph(location, timeframe)
+        # Get LangGraph multi-agent prediction with route-level timeout
+        import concurrent.futures as _cf
+        _timeout_secs = 420  # Route-level cap: scaled for up to 14-day forecasts
+        _pool = _cf.ThreadPoolExecutor(max_workers=1)
+        _future = _pool.submit(weather_service.predict_weather_with_langgraph, location, timeframe)
+        _pool.shutdown(wait=False)  # Don't block on cleanup
+        try:
+            result = _future.result(timeout=_timeout_secs)
+        except _cf.TimeoutError:
+            logger.warning(f"⏱️ LangGraph route timeout after {_timeout_secs}s – returning fallback")
+            return jsonify({
+                "success": False,
+                "error": "LangGraph prediction timed out. The model took too long to respond.",
+                "error_type": "timeout",
+                "location": location,
+                "timeframe": timeframe
+            }), 504
         
         if result and result.get('success'):
             logger.info("✅ LangGraph multi-agent weather prediction successful")
+            # --- Parse the LLM's prediction string server-side so the frontend
+            #     always receives a clean structured array, even when the raw
+            #     string is truncated or wrapped in ```json fences. ---
+            raw_pred = result.get('prediction', '')
+            if isinstance(raw_pred, str):
+                import re as _re
+                stripped = _re.sub(r'^```json\s*', '', raw_pred.strip(), flags=_re.IGNORECASE)
+                stripped = _re.sub(r'^```\s*', '', stripped, flags=_re.IGNORECASE)
+                stripped = _re.sub(r'```\s*$', '', stripped, flags=_re.IGNORECASE).strip()
+                parsed_forecast = None
+
+                # Strategy 1: direct parse (works when JSON is complete)
+                try:
+                    parsed_forecast = json.loads(stripped)
+                except json.JSONDecodeError:
+                    pass
+
+                # Strategy 2: extract every complete {…} day-object via regex.
+                # Robust regardless of where truncation occurs — no bracket-counting needed.
+                if not (parsed_forecast and isinstance(parsed_forecast.get('predictions'), list)):
+                    day_matches = _re.findall(r'\{[^{}]+\}', stripped)
+                    complete_days = []
+                    for m in day_matches:
+                        try:
+                            obj = json.loads(m)
+                            # Accept objects that look like a forecast day
+                            if 'day' in obj or 'conditions' in obj or 'temperature_c' in obj:
+                                complete_days.append(obj)
+                        except Exception:
+                            pass
+                    if complete_days:
+                        # Salvage analysis text if present
+                        analysis_match = _re.search(
+                            r'"analysis"\s*:\s*"(.*?)(?:"|$)', stripped, _re.DOTALL)
+                        analysis_text = analysis_match.group(1) if analysis_match else ''
+                        parsed_forecast = {'predictions': complete_days, 'analysis': analysis_text}
+                        logger.info(f"✅ Forecast repaired via day-object extraction: {len(complete_days)} days")
+
+                if parsed_forecast and isinstance(parsed_forecast.get('predictions'), list):
+                    result['forecast_days']     = parsed_forecast['predictions']
+                    result['forecast_analysis'] = parsed_forecast.get('analysis', '')
+                    logger.info(f"✅ Forecast parsed server-side: {len(result['forecast_days'])} days")
             return jsonify(result), 200
         else:
             logger.error(f"❌ LangGraph multi-agent prediction failed")
@@ -1097,3 +1334,307 @@ def get_langgraph_status():
             'error': f'LangGraph status check failed: {str(e)}',
             'success': False
         }), 500
+
+
+# ---------------------------------------------------------------------------
+# Week 4: Ensemble prediction endpoint
+# ---------------------------------------------------------------------------
+
+@api.route('/weather/predict-ensemble', methods=['POST'])
+@require_auth
+def predict_weather_ensemble():
+    """
+    Confidence-weighted ensemble prediction with full production guards.
+
+    Combines LangGraph, Multi-query RAG, Standard RAG, and Statistical
+    predictions via Qwen3 CoT meta-synthesis.
+
+    Body JSON fields:
+      location         str   default "Tokyo"
+      days             int   1-14, default 3
+      season           str   "auto"|"Winter"|"Spring"|"Summer"|"Autumn"
+      enable_multiquery bool  default true
+    """
+    try:
+        user_id = str(get_session_user_id())
+
+        # --- Rate limiting ---
+        if PRODUCTION_GUARDS:
+            allowed, rl_info = rate_limiter.check(user_id, 'authenticated')
+            if not allowed:
+                return jsonify({"error": "Rate limit exceeded", **rl_info}), 429
+
+        data = request.get_json() or {}
+
+        # --- Input schema validation (Pydantic) ---
+        if PRODUCTION_GUARDS and PYDANTIC_AVAILABLE and WeatherPredictionRequest:
+            try:
+                req = WeatherPredictionRequest(**data)
+                location         = req.location
+                days             = req.days
+                season           = req.season or 'auto'
+                enable_multiquery = req.enable_multiquery
+            except ValidationError as ve:
+                if PRODUCTION_GUARDS: rate_limiter.release(user_id)
+                return jsonify({"error": "Validation failed", "details": str(ve)}), 400
+        else:
+            location          = str(data.get('location', 'Tokyo')).strip() or 'Tokyo'
+            days              = int(data.get('days', data.get('prediction_days', 3)))
+            season            = str(data.get('season', 'auto'))
+            enable_multiquery = bool(data.get('enable_multiquery', True))
+
+        # --- Prompt injection guard ---
+        if PRODUCTION_GUARDS:
+            sec = security_guard.validate_location(location)
+            if not sec.is_safe:
+                rate_limiter.release(user_id)
+                return jsonify({"error": sec.rejection_reason, "success": False}), 400
+            location = sec.sanitized_input
+
+        # --- Basic validation ---
+        if not (1 <= days <= 14):
+            if PRODUCTION_GUARDS: rate_limiter.release(user_id)
+            return jsonify({"error": "days must be between 1 and 14"}), 400
+        if season not in ('auto', 'Winter', 'Spring', 'Summer', 'Autumn'):
+            season = 'auto'
+
+        logger.info(
+            "🎯 Ensemble prediction: location=%s days=%d season=%s multiquery=%s",
+            location, days, season, enable_multiquery
+        )
+
+        if not weather_service:
+            return jsonify({"error": "Weather service not available", "success": False}), 503
+
+        import concurrent.futures as _cf
+        _ens_timeout = 300
+        _pool2 = _cf.ThreadPoolExecutor(max_workers=1)
+        _future2 = _pool2.submit(
+            weather_service.predict_weather_ensemble,
+            location=location,
+            prediction_days=days,
+            season=season,
+            enable_multiquery=enable_multiquery,
+        )
+        _pool2.shutdown(wait=False)  # Don't block on cleanup
+        try:
+            result = _future2.result(timeout=_ens_timeout)
+        except _cf.TimeoutError:
+            logger.warning(f"⏱️ Ensemble route timeout after {_ens_timeout}s")
+            if PRODUCTION_GUARDS: rate_limiter.release(user_id)
+            return jsonify({
+                "success": False,
+                "error": "Ensemble prediction timed out. The model took too long to respond.",
+                "error_type": "timeout",
+                "location": location,
+                "days": days
+            }), 504
+
+        if result and result.get('success'):
+            logger.info("✅ Ensemble prediction successful")
+            return jsonify(result), 200
+        else:
+            logger.error("❌ Ensemble prediction failed: %s", result.get('error', 'unknown'))
+            return jsonify({
+                "error": result.get('error', 'Ensemble prediction failed'),
+                "success": False,
+                "method": "ensemble_failed",
+                "location": location,
+                "prediction_days": days,
+            }), 500
+
+    except (TypeError, ValueError) as e:
+        if PRODUCTION_GUARDS: rate_limiter.release(str(get_session_user_id()) if 'user_id' in session else '__none__')
+        return jsonify({"error": f"Invalid parameters: {str(e)}", "success": False}), 400
+
+    except Exception as e:
+        logger.error("❌ Ensemble endpoint error: %s", str(e))
+        if PRODUCTION_GUARDS: rate_limiter.release(str(get_session_user_id()) if 'user_id' in session else '__none__')
+        return jsonify({"error": f"Server error: {str(e)}", "success": False}), 500
+
+    finally:
+        if PRODUCTION_GUARDS:
+            try:
+                rate_limiter.release(str(session.get('user_id', '__none__')))
+            except Exception:
+                pass
+
+
+@api.route('/weather/ensemble-status', methods=['GET'])
+@require_auth
+def get_ensemble_status():
+    """Return status of the ensemble prediction service."""
+    try:
+        status = weather_service.get_ensemble_status() if weather_service else {"available": False}
+        return jsonify({"success": True, "ensemble_status": status,
+                        "timestamp": datetime.now().isoformat()}), 200
+
+    except Exception as e:
+        logger.error("❌ Ensemble status error: %s", str(e))
+        return jsonify({"error": str(e), "success": False}), 500
+
+
+# ---------------------------------------------------------------------------
+# Production monitoring endpoints
+# ---------------------------------------------------------------------------
+
+@api.route('/monitoring/dashboard', methods=['GET'])
+@require_auth
+def monitoring_dashboard():
+    """
+    Real-time MLOps monitoring dashboard.
+
+    Returns:
+      - prediction latency percentiles (p50 / p95 / p99)
+      - success / cache-hit rates
+      - method breakdown
+      - circuit breaker states
+      - rate limiter stats
+    """
+    try:
+        payload = {
+            "predictions": observability.get_dashboard_metrics() if PRODUCTION_GUARDS else {},
+            "circuit_breakers": circuit_breakers.get_all_status() if PRODUCTION_GUARDS else {},
+            "rate_limiter": rate_limiter.get_stats() if PRODUCTION_GUARDS else {},
+            "guards_active": PRODUCTION_GUARDS,
+            "timestamp": datetime.now().isoformat(),
+        }
+        return jsonify({"success": True, **payload}), 200
+
+    except Exception as e:
+        logger.error("❌ Monitoring dashboard error: %s", e)
+        return jsonify({"error": str(e), "success": False}), 500
+
+
+@api.route('/monitoring/circuit-breakers/<string:breaker_name>/reset', methods=['POST'])
+@require_auth
+def reset_circuit_breaker(breaker_name: str):
+    """
+    Manually reset a circuit breaker to CLOSED state.
+
+    Path param:
+      breaker_name — one of: lm_studio, rag_service, langgraph, ensemble
+    """
+    if not PRODUCTION_GUARDS:
+        return jsonify({"error": "Production guards not active"}), 503
+
+    cb = circuit_breakers.get(breaker_name)
+    if cb is None:
+        return jsonify({
+            "error": f"Unknown breaker '{breaker_name}'",
+            "valid_names": ["lm_studio", "rag_service", "langgraph", "ensemble"],
+        }), 404
+
+    cb.reset()
+    logger.info("🔄 Circuit breaker '%s' manually reset by user %s",
+                breaker_name, session.get('user_id'))
+    return jsonify({
+        "success": True,
+        "breaker": breaker_name,
+        "new_state": cb.get_status()["state"],
+        "timestamp": datetime.now().isoformat(),
+    }), 200
+
+
+@api.route('/monitoring/rate-limiter/reset/<string:user_id>', methods=['POST'])
+@require_auth
+def reset_rate_limit_user(user_id: str):
+    """Admin: clear rate-limit bucket for a specific user_id."""
+    if not PRODUCTION_GUARDS:
+        return jsonify({"error": "Production guards not active"}), 503
+
+    rate_limiter.reset_user(user_id)
+    logger.info("🔄 Rate limit reset for user '%s' by admin %s",
+                user_id, session.get('user_id'))
+    return jsonify({
+        "success": True,
+        "cleared_user": user_id,
+        "timestamp": datetime.now().isoformat(),
+    }), 200
+
+
+# ---------------------------------------------------------------------------
+# Electricity load model (pkl-based, no CSV at runtime)
+# ---------------------------------------------------------------------------
+
+def _get_electricity_model():
+    """Lazy import to avoid circular deps at module load."""
+    try:
+        from backend.electricity_model_service import electricity_model
+        return electricity_model
+    except Exception as exc:
+        logger.error("⚡ Could not load electricity_model_service: %s", exc)
+        return None
+
+
+@api.route('/weather/predict-electricity', methods=['POST'])
+@require_auth
+def predict_electricity_load():
+    """
+    Predict electricity load using the trained pkl model (no CSV needed).
+
+    Request JSON:
+        location          str   (informational, not used by model)
+        days              int   1-14  default 7
+        forecast_temp     float °C
+        forecast_humidity float %
+        forecast_solar    float kWh/m²/day
+        forecast_wind     float m/s
+        forecast_rain     float mm
+        forecast_cloud    float 0-10
+        season            str   Spring|Summer|Autumn|Winter
+        belnder_forecast  float demand forecast MW  (optional)
+        is_holiday        int   0|1
+        datetime_str      str   ISO format (default: now)
+
+    Response JSON:
+        success           bool
+        method            "electricity_model_pkl"
+        predicted_load_mw float
+        confidence_band   [lower, upper]
+        confidence_level  High|Medium|Low
+        prediction        str  (human-readable summary)
+        model_info        dict
+    """
+    data = request.get_json(silent=True) or {}
+
+    location = data.get("location", "Tokyo")
+    days     = min(int(data.get("days", 7)), 14)
+
+    em = _get_electricity_model()
+    if em is None or not em.is_available():
+        return jsonify({
+            "success": False,
+            "error": "Electricity model not available. Run: python train_electricity_model.py",
+        }), 503
+
+    try:
+        result = em.predict_for_weather(
+            location=location,
+            days=days,
+            forecast_temp=float(data.get("forecast_temp", 20.0)),
+            forecast_humidity=float(data.get("forecast_humidity", 65.0)),
+            forecast_solar=float(data.get("forecast_solar", 4.5)),
+            forecast_wind=float(data.get("forecast_wind", 6.0)),
+            forecast_rain=float(data.get("forecast_rain", 4.8)),
+            forecast_cloud=float(data.get("forecast_cloud", 3.3)),
+            season=data.get("season", "Autumn"),
+            is_holiday=int(data.get("is_holiday", 0)),
+            belnder_forecast=float(data.get("belnder_forecast", 1076.5)),
+        )
+        return jsonify(result), 200 if result["success"] else 500
+
+    except Exception as e:
+        logger.error("⚡ Electricity load prediction error: %s", e)
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@api.route('/weather/electricity-model-status', methods=['GET'])
+@require_auth
+def electricity_model_status():
+    """Return metadata and performance metrics of the trained electricity pkl model."""
+    em = _get_electricity_model()
+    if em is None:
+        return jsonify({"success": False, "error": "Service unavailable"}), 503
+    info = em.get_model_info()
+    return jsonify({"success": True, **info}), 200

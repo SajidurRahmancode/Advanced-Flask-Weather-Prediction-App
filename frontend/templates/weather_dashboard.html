@@ -603,6 +603,97 @@ function showAgentWorkflow() {
 }
 
 // Display prediction results
+function formatWeatherPrediction(data) {
+    // ------------------------------------------------------------------
+    // Priority 1: server already parsed the JSON → use forecast_days array
+    // ------------------------------------------------------------------
+    let days     = (data && Array.isArray(data.forecast_days) && data.forecast_days.length > 0)
+                   ? data.forecast_days : null;
+    let analysis = (data && data.forecast_analysis) ? data.forecast_analysis : null;
+
+    // ------------------------------------------------------------------
+    // Priority 2: try to parse data.prediction string client-side
+    // (backup for other prediction methods that don't go through the
+    //  server-side parser)
+    // ------------------------------------------------------------------
+    if (!days) {
+        const predictionStr = (data && data.prediction) ? data.prediction : (typeof data === 'string' ? data : '');
+        let cleaned = predictionStr.trim();
+        cleaned = cleaned.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
+        let forecast = null;
+        try { forecast = JSON.parse(cleaned); } catch(e) {}
+        if (forecast && Array.isArray(forecast.predictions) && forecast.predictions.length > 0) {
+            days     = forecast.predictions;
+            analysis = forecast.analysis || null;
+        }
+        if (!days) {
+            // Final fallback: raw preformatted text
+            const raw = (data && data.prediction) ? data.prediction : (typeof data === 'string' ? data : '');
+            return `<div class="card"><div class="card-body"><pre class="weather-forecast mb-0">${raw}</pre></div></div>`;
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Render structured day cards
+    // ------------------------------------------------------------------
+    const confidenceBadge = (c) => {
+        const map = { high: 'success', medium: 'warning', low: 'danger' };
+        return `<span class="badge bg-${map[(c||'').toLowerCase()] || 'secondary'}">${(c||'').toUpperCase()}</span>`;
+    };
+    const conditionIcon = (cond) => {
+        const t = (cond || '').toLowerCase();
+        if (t.includes('snow'))                              return '🌨️';
+        if (t.includes('rain') || t.includes('shower'))     return '🌧️';
+        if (t.includes('thunder') || t.includes('storm'))   return '⛈️';
+        if (t.includes('fog')  || t.includes('mist'))       return '🌫️';
+        if (t.includes('overcast'))                         return '☁️';
+        if (t.includes('partly cloudy') || t.includes('partly')) return '⛅';
+        if (t.includes('cloudy'))                           return '🌥️';
+        if (t.includes('clear') || t.includes('sunny'))    return '☀️';
+        return '🌤️';
+    };
+
+    const dayCards = days.map(d => {
+        const dateLabel = d.date
+            ? new Date(d.date + 'T12:00:00').toLocaleDateString('en-US', {weekday:'short', month:'short', day:'numeric'})
+            : `Day ${d.day}`;
+        const precip = d.precipitation_chance != null ? d.precipitation_chance : 0;
+        const precipBar = `<div class="progress" style="height:6px;" title="${precip}% precipitation">
+            <div class="progress-bar bg-info" style="width:${precip}%"></div></div>`;
+        return `
+        <div class="card border-0 shadow-sm mb-3">
+          <div class="card-body py-3">
+            <div class="row align-items-center">
+              <div class="col-2 text-center">
+                <div style="font-size:2rem;">${conditionIcon(d.conditions)}</div>
+                <small class="text-muted fw-bold">${dateLabel}</small>
+              </div>
+              <div class="col-5">
+                <div class="fw-semibold mb-1">${d.conditions || ''}</div>
+                <small class="text-muted">🌧️ Rain chance: ${precip}%</small>
+                <div class="mt-1">${precipBar}</div>
+              </div>
+              <div class="col-3">
+                <div><span style="font-size:1.2rem;font-weight:600;">🌡️ ${d.temperature_c != null ? d.temperature_c + '°C' : '—'}</span></div>
+                <small class="text-muted">💧 Humidity: ${d.humidity_percent != null ? d.humidity_percent + '%' : '—'}</small><br>
+                <small class="text-muted">🌬️ Wind: ${d.wind_speed_kmh != null ? d.wind_speed_kmh + ' km/h' : '—'}</small>
+              </div>
+              <div class="col-2 text-center">
+                ${confidenceBadge(d.confidence)}
+                <div><small class="text-muted">confidence</small></div>
+              </div>
+            </div>
+          </div>
+        </div>`;
+    }).join('');
+
+    const analysisBlock = analysis
+        ? `<div class="alert alert-light border mt-3"><i class="fas fa-microscope me-2 text-info"></i><strong>Analysis:</strong> ${analysis}</div>`
+        : '';
+
+    return `<div>${dayCards}${analysisBlock}</div>`;
+}
+
 function displayPredictionResults(data, method) {
     const results = document.getElementById('predictionResults');
     
@@ -684,11 +775,7 @@ function displayPredictionResults(data, method) {
             </div>
             
             <div class="prediction-content">
-                <div class="card">
-                    <div class="card-body">
-                        <pre class="weather-forecast mb-0">${data.prediction}</pre>
-                    </div>
-                </div>
+                ${formatWeatherPrediction(data)}
             </div>
             
             ${confidenceDisplay}
@@ -757,11 +844,7 @@ function displayPredictionResults(data, method) {
             </div>
             
             <div class="prediction-content">
-                <div class="card">
-                    <div class="card-body">
-                        <pre class="weather-forecast mb-0">${data.prediction}</pre>
-                    </div>
-                </div>
+                ${formatWeatherPrediction(data)}
             </div>
         `;
     }

@@ -96,3 +96,4 @@ data/Generated_electricity_load_japan_past365days_much_more_reduced.csv
 data/Generated_electricity_load_japan_past365days.csv
 backend/weather_service_simple.py
 frontend/README.md
+/flasking_py311

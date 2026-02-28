@@ -1,0 +1,51 @@
+{
+  "test_date": "2026-02-28T18:02:32.171861",
+  "python_version": "3.11.3",
+  "summary": {
+    "total": 3,
+    "passed": 3,
+    "failed": 0,
+    "pass_rate": 100.0
+  },
+  "results": [
+    {
+      "location": "Tokyo",
+      "days": 3,
+      "success": true,
+      "elapsed": 0.003,
+      "method": "ensemble_cot",
+      "confidence": "Low",
+      "quality": 0.4,
+      "prediction_length": 290,
+      "methods_used": [
+        "statistical"
+      ]
+    },
+    {
+      "location": "New York",
+      "days": 5,
+      "success": true,
+      "elapsed": 0.001001,
+      "method": "ensemble_cot",
+      "confidence": "Low",
+      "quality": 0.4,
+      "prediction_length": 293,
+      "methods_used": [
+        "statistical"
+      ]
+    },
+    {
+      "location": "London",
+      "days": 7,
+      "success": true,
+      "elapsed": 0.001,
+      "method": "ensemble_cot",
+      "confidence": "Low",
+      "quality": 0.4,
+      "prediction_length": 291,
+      "methods_used": [
+        "statistical"
+      ]
+    }
+  ]
+}

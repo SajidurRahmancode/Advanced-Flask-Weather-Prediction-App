@@ -150,32 +150,72 @@ class WeatherRAGService:
             
             if not active_embeddings:
                 raise Exception("No embeddings available (Google or local)")
-                
-            # Check if vector store already exists
+
+            # Helper: count embeddings stored in the ChromaDB SQLite file.
+            def _count_stored_embeddings():
+                try:
+                    import sqlite3 as _sqlite3
+                    db_file = os.path.join(self.vector_db_path, "chroma.sqlite3")
+                    if not os.path.exists(db_file):
+                        return 0
+                    conn = _sqlite3.connect(db_file)
+                    count = conn.execute("SELECT COUNT(*) FROM embeddings").fetchone()[0]
+                    conn.close()
+                    return count
+                except Exception:
+                    return -1  # unknown – don't rebuild
+
+            needs_rebuild = False
+
+            # Check if vector store directory already exists and is non-empty
             if os.path.exists(self.vector_db_path) and os.listdir(self.vector_db_path):
-                logger.info("📂 Loading existing vector store...")
-                self.vector_store = Chroma(
-                    persist_directory=self.vector_db_path,
-                    embedding_function=active_embeddings
-                )
+                stored_count = _count_stored_embeddings()
+                if stored_count == 0:
+                    logger.warning("⚠️ Existing vector store is empty – rebuilding with local embeddings")
+                    needs_rebuild = True
+                    # Delete the empty SQLite file so Chroma creates a fresh one
+                    try:
+                        import shutil
+                        shutil.rmtree(self.vector_db_path)
+                    except Exception as _del_err:
+                        logger.warning(f"⚠️ Could not remove old vector_db: {_del_err}")
+                else:
+                    logger.info(f"📂 Loading existing vector store ({stored_count} embeddings)...")
+                    self.vector_store = Chroma(
+                        persist_directory=self.vector_db_path,
+                        embedding_function=active_embeddings
+                    )
             else:
+                needs_rebuild = True
+
+            if needs_rebuild:
+                # When Google embeddings are unavailable, prefer local embeddings
+                build_embeddings = active_embeddings
+                if active_embeddings is self.embeddings and self.local_embeddings:
+                    # Google embeddings may fail during document ingestion; use
+                    # local embeddings so the rebuild is guaranteed to succeed.
+                    build_embeddings = self.local_embeddings
+                    self.use_local_fallback = True
+                    logger.info("🔄 Rebuilding vector store using local embeddings")
+
                 logger.info("🔄 Creating new vector store from weather data...")
-                # Process and store weather documents
                 documents = self._process_weather_data()
-                
+
                 if not documents:
                     raise Exception("No documents created from weather data")
-                
-                # Create vector store
+
                 os.makedirs(self.vector_db_path, exist_ok=True)
                 self.vector_store = Chroma.from_documents(
                     documents=documents,
-                    embedding=active_embeddings,
+                    embedding=build_embeddings,
                     persist_directory=self.vector_db_path
                 )
-                
+
                 # Persist the vector store
-                self.vector_store.persist()
+                try:
+                    self.vector_store.persist()
+                except Exception:
+                    pass  # newer Chroma versions auto-persist
                 logger.info(f"💾 Vector store persisted with {len(documents)} documents")
             
             # Create retriever
@@ -186,9 +226,7 @@ class WeatherRAGService:
             
         except Exception as e:
             logger.error(f"❌ Vector store setup failed: {str(e)}")
-            raise
-            # Don't raise exception - allow service to continue without RAG
-            self.embeddings = None
+            # Allow service to continue without RAG rather than crashing
             self.vector_store = None
             self.retriever = None
     
@@ -295,6 +333,15 @@ Data Quality: {daily_stats['records_count']} hourly measurements"""
             'rainfall_category': self._categorize_rainfall(daily_stats['total_rainfall']),
             'weather_pattern': 'stable' if daily_stats['weather_variability'] < 5 else 'variable'
         }
+
+        # Convert numpy/pandas types to plain Python types so Chroma accepts them
+        def _to_py(v):
+            import numpy as np
+            if isinstance(v, (np.integer,)):  return int(v)
+            if isinstance(v, (np.floating,)): return float(v)
+            if isinstance(v, (np.bool_,)):    return bool(v)
+            return v
+        metadata = {k: _to_py(v) for k, v in metadata.items()}
         
         return Document(page_content=content, metadata=metadata)
     
@@ -489,14 +536,18 @@ Season Characteristics: {self._get_seasonal_characteristics(season)}"""
                     try:
                         logger.info("🔄 Attempting local embeddings fallback...")
                         
-                        # Temporarily switch to local embeddings
-                        original_embeddings = self.vector_store.embedding_function
-                        self.vector_store.embedding_function = self.local_embeddings
-                        
-                        docs = self.retriever.get_relevant_documents(enhanced_query)
-                        
-                        # Restore original embeddings
-                        self.vector_store.embedding_function = original_embeddings
+                        # Create a new retriever with local embeddings instead of
+                        # trying to swap the embedding_function attribute (not
+                        # available in newer langchain-community Chroma versions).
+                        local_vector_store = Chroma(
+                            persist_directory=self.vector_db_path,
+                            embedding_function=self.local_embeddings
+                        )
+                        local_retriever = local_vector_store.as_retriever(
+                            search_type="similarity",
+                            search_kwargs={"k": k * 2}
+                        )
+                        docs = local_retriever.invoke(enhanced_query)
                         
                         logger.info("✅ Local embeddings fallback successful")
                         
@@ -522,6 +573,139 @@ Season Characteristics: {self._get_seasonal_characteristics(season)}"""
         except Exception as e:
             logger.error(f"❌ RAG retrieval failed: {str(e)}")
             return []
+    
+    def multi_query_retrieval(self, location: str, days: int, season: str = None, k: int = 10, lm_studio_service=None) -> Dict[str, Any]:
+        """Enhanced retrieval using multi-query approach with LM Studio
+        
+        Args:
+            location: Location for weather prediction
+            days: Number of days to predict  
+            season: Optional season filter
+            k: Number of documents to retrieve
+            lm_studio_service: LM Studio service for query generation
+            
+        Returns:
+            Dict with retrieved documents and query variations
+        """
+        try:
+            if not self.is_available():
+                logger.warning("⚠️ RAG service not available")
+                return {"documents": [], "query_variations": [], "total_retrieved": 0}
+            
+            logger.info(f"🔍 Multi-query retrieval for {location} ({days} days)")
+            
+            # Generate query variations
+            query_variations = self._generate_query_variations_sync(location, days, season, lm_studio_service)
+            logger.info(f"📝 Generated {len(query_variations)} query variations")
+            
+            # Retrieve documents for each query variation
+            all_results = []
+            seen_content = set()
+            
+            for i, query in enumerate(query_variations):
+                try:
+                    # Use existing retrieve_similar_weather method
+                    results = self.retrieve_similar_weather(query, k=max(3, k // len(query_variations)))
+                    
+                    # Deduplicate based on content hash
+                    for result in results:
+                        content_hash = hash(result['content'][:200])  # Hash first 200 chars
+                        if content_hash not in seen_content:
+                            seen_content.add(content_hash)
+                            result['source_query'] = query
+                            result['query_index'] = i
+                            all_results.append(result)
+                            
+                    logger.info(f"✅ Query {i+1}/{len(query_variations)}: Retrieved {len(results)} docs")
+                    
+                except Exception as e:
+                    logger.warning(f"⚠️ Query {i+1} failed: {e}")
+                    continue
+            
+            # Sort by relevance score (if available)
+            all_results.sort(key=lambda x: x.get('relevance_score', 0), reverse=True)
+            
+            # Limit final results
+            final_results = all_results[:k]
+            
+            logger.info(f"📊 Multi-query retrieval complete: {len(final_results)} unique documents from {len(all_results)} total")
+            
+            return {
+                "documents": final_results,
+                "query_variations": query_variations,
+                "total_retrieved": len(all_results),
+                "final_count": len(final_results),
+                "deduplication": len(all_results) - len(final_results)
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Multi-query retrieval failed: {e}")
+            return {"documents": [], "query_variations": [], "total_retrieved": 0}
+    
+    def _generate_query_variations_sync(self, location: str, days: int, season: str = None, lm_studio_service=None) -> List[str]:
+        """Generate query variations for better retrieval coverage
+        
+        Args:
+            location: Location name
+            days: Number of days
+            season: Optional season
+            lm_studio_service: LM Studio service for AI-powered generation
+            
+        Returns:
+            List of query strings
+        """
+        # Base query
+        base_query = f"weather prediction {location} {days} days"
+        
+        # Try using LM Studio for intelligent query generation
+        if lm_studio_service and lm_studio_service.available:
+            try:
+                logger.info("🤖 Using LM Studio for query generation")
+                
+                prompt = f"""Generate 5 different search queries to find relevant historical weather patterns for:
+- Location: {location}
+- Forecast period: {days} days
+- Season: {season or 'any'}
+
+Each query should focus on different aspects:
+1. General weather patterns
+2. Temperature and humidity trends
+3. Seasonal characteristics
+4. Extreme weather events
+5. Atmospheric conditions
+
+Return ONLY the queries, one per line, without numbering."""
+
+                response = lm_studio_service.generate_text(prompt, max_tokens=300)
+                
+                # Extract queries from response  
+                if response:
+                    generated_queries = [q.strip() for q in response.strip().split('\n') if q.strip()]
+                    if len(generated_queries) >= 3:  # Use if we got enough queries
+                        logger.info(f"✅ Generated {len(generated_queries)} queries using LM Studio")
+                        return generated_queries[:6]  # Limit to 6
+                        
+            except Exception as e:
+                logger.warning(f"⚠️ LM Studio query generation failed: {e}, falling back to template-based")
+        
+        # Fallback: Template-based query variations
+        logger.info("📋 Using template-based query generation")
+        
+        season_part = f"{season} season " if season else ""
+        
+        queries = [
+            f"{base_query}",
+            f"{season_part}weather patterns {location} temperature humidity",
+            f"historical weather {location} {season_part}conditions",
+            f"{location} weather forecast {days} days {season_part}trends",
+            f"meteorological data {location} {season_part}precipitation wind"
+        ]
+        
+        # Add season-specific queries if provided
+        if season:
+            queries.append(f"{season} weather characteristics {location}")
+        
+        return queries
     
     def search_by_conditions(self, temp_range=None, humidity_range=None, season=None, k=5):
         """Search for weather patterns by specific conditions"""

@@ -54,6 +54,7 @@ def create_app():
     # Initialize extensions
     jwt = JWTManager(app)
     csrf = CSRFProtect(app)
+    csrf.exempt(api)   # API routes use session auth + JSON; no CSRF form tokens needed
     db.init_app(app)
     
     # Initialize WebSocket service

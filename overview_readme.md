@@ -438,9 +438,9 @@ import requests  # For LM Studio API calls
 ```
 
 ### **Data Sources:**
-- **Historical Weather Data:** 274 records from `Generated_electricity_load_japan_past365days.csv`
-- **Vector Storage:** ChromaDB with Google AI embeddings
-- **Local LLM:** LM Studio with llama-3.2-3b-instruct model
+- **Historical Weather Data:** 263 records from `Generated_electricity_load_japan_past365days.csv`
+- **Vector Storage:** ChromaDB with local sentence-transformer embeddings (all-MiniLM-L6-v2)
+- **Local LLM:** LM Studio with **Qwen3-14B** model (port 1234)
 - **Memory:** Conversation history for context continuity
 
 ---

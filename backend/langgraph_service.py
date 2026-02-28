@@ -229,16 +229,17 @@ class LangGraphWeatherService:
                 return state
         
         def pattern_analysis_agent(state: WeatherAnalysisState) -> WeatherAnalysisState:
-            """Agent responsible for analyzing historical weather patterns"""
-            logger.info("📊 Pattern Analysis Agent: Analyzing historical patterns")
+            """Agent responsible for analyzing historical weather patterns with Qwen3 CoT"""
+            logger.info("📊 Pattern Analysis Agent: Analyzing historical patterns with AI reasoning")
             
             # Broadcast agent start
             self._broadcast_agent_status('pattern_analysis', 'running', 0.1, 
-                                       "Starting pattern analysis...")
+                                       "Starting AI-powered pattern analysis...")
             
             try:
                 patterns = []
                 rag_confidence = 0.0
+                ai_analysis = ""
                 
                 if self.rag_service and state['current_conditions']:
                     # Broadcast progress
@@ -250,24 +251,72 @@ class LangGraphWeatherService:
                     query = f"weather temperature {conditions.get('temperature', 20)} humidity {conditions.get('humidity', 60)}"
                     
                     try:
-                        self._broadcast_agent_status('pattern_analysis', 'running', 0.6, 
+                        self._broadcast_agent_status('pattern_analysis', 'running', 0.5, 
                                                    "Retrieving similar weather patterns...")
                         similar_patterns = self.rag_service.retrieve_similar_weather(query, k=5)
                         patterns = [{'content': p.page_content, 'metadata': getattr(p, 'metadata', {})} for p in similar_patterns]
-                        rag_confidence = min(0.9, len(patterns) * 0.15)  # Scale confidence based on patterns found
+                        
+                        # WEEK 3 ENHANCEMENT: Use Qwen3 CoT to analyze patterns
+                        if patterns and self.lm_studio_service and self.lm_studio_service.available:
+                            self._broadcast_agent_status('pattern_analysis', 'running', 0.7, 
+                                                       "Analyzing patterns with Qwen3 CoT reasoning...")
+                            
+                            # Build CoT prompt for pattern analysis
+                            pattern_texts = "\n".join([f"Pattern {i+1}: {p['content'][:200]}..." 
+                                                      for i, p in enumerate(patterns[:3])])
+                            
+                            cot_prompt = f"""Weather patterns for {state['location']} ({season}), {len(patterns)} historical matches.
+Current: {conditions.get('temperature','N/A')}°C, {conditions.get('humidity','N/A')}% RH, {conditions.get('wind_speed','N/A')} m/s.
+Top pattern: {pattern_texts.split(chr(10))[0][:150] if pattern_texts else 'none'}
+
+In 2 sentences: key trend and confidence score (0.0-1.0)."""
+
+                            try:
+                                messages = [{"role": "user", "content": cot_prompt}]
+                                ai_analysis = self.lm_studio_service.generate_chat(messages, max_tokens=300, temperature=0.3)
+                                
+                                # Extract confidence from AI analysis or use pattern-based scoring
+                                if "confidence" in ai_analysis.lower():
+                                    # Try to extract numeric confidence
+                                    import re
+                                    conf_match = re.search(r'confidence[:\s]+([0-9.]+)', ai_analysis.lower())
+                                    if conf_match:
+                                        rag_confidence = min(0.95, float(conf_match.group(1)))
+                                    else:
+                                        rag_confidence = min(0.85, len(patterns) * 0.15 + 0.2)
+                                else:
+                                    rag_confidence = min(0.85, len(patterns) * 0.15 + 0.2)
+                                    
+                                logger.info(f"✅ Pattern analysis with CoT completed: {len(ai_analysis)} chars")
+                                
+                            except Exception as cot_error:
+                                logger.warning(f"⚠️ Qwen3 CoT analysis failed, using fallback: {cot_error}")
+                                ai_analysis = f"Pattern analysis: {len(patterns)} similar patterns found"
+                                rag_confidence = min(0.75, len(patterns) * 0.15)
+                        else:
+                            # Fallback: simple pattern-based confidence
+                            rag_confidence = min(0.75, len(patterns) * 0.15)
+                            ai_analysis = f"Retrieved {len(patterns)} historical patterns for comparison"
+                            
                     except Exception as rag_error:
                         logger.warning(f"⚠️ RAG retrieval failed: {rag_error}")
                         patterns = []
                         rag_confidence = 0.1
+                        ai_analysis = "Pattern retrieval failed - using limited historical data"
                 
                 state['historical_patterns'] = patterns
                 state['rag_confidence'] = rag_confidence
-                state['agent_reports']['pattern_analyzer'] = f"✅ Found {len(patterns)} similar patterns (confidence: {rag_confidence:.2f})"
+                state['analysis_results']['pattern_analysis'] = {
+                    'patterns_found': len(patterns),
+                    'confidence': rag_confidence,
+                    'ai_reasoning': ai_analysis[:300] if ai_analysis else "No AI analysis available"
+                }
+                state['agent_reports']['pattern_analyzer'] = f"✅ Found {len(patterns)} patterns (confidence: {rag_confidence:.2f}, AI-enhanced)"
                 
                 # Broadcast completion
                 self._broadcast_agent_status('pattern_analysis', 'completed', 1.0, 
-                                           f"Pattern analysis completed - Found {len(patterns)} similar patterns",
-                                           data={'patterns_count': len(patterns), 'confidence': rag_confidence})
+                                           f"AI pattern analysis completed - {len(patterns)} patterns, confidence: {rag_confidence:.2f}",
+                                           data={'patterns_count': len(patterns), 'confidence': rag_confidence, 'ai_enhanced': bool(ai_analysis)})
                 
                 return state
                 
@@ -282,66 +331,116 @@ class LangGraphWeatherService:
                 return state
         
         def meteorological_expert_agent(state: WeatherAnalysisState) -> WeatherAnalysisState:
-            """Agent applying meteorological expertise"""
-            logger.info("🌤️ Meteorological Expert Agent: Applying domain expertise")
+            """Agent applying meteorological expertise with Qwen3 CoT"""
+            logger.info("🌤️ Meteorological Expert Agent: Applying AI-enhanced domain expertise")
             
             # Broadcast agent start
             self._broadcast_agent_status('meteorological', 'running', 0.1, 
-                                       "Starting meteorological analysis...")
+                                       "Starting AI-powered meteorological analysis...")
             
             try:
                 # Broadcast progress
-                self._broadcast_agent_status('meteorological', 'running', 0.3, 
-                                           "Analyzing seasonal factors...")
+                self._broadcast_agent_status('meteorological', 'running', 0.2, 
+                                           "Determining seasonal context...")
                 
-                # Determine seasonal factors
+                # Determine season
                 current_month = datetime.now().month
                 if current_month in [12, 1, 2]:
                     season = "Winter"
-                    seasonal_factors = "Cold air masses, potential snow, lower humidity"
                 elif current_month in [3, 4, 5]:
-                    season = "Spring"  
-                    seasonal_factors = "Variable conditions, frontal systems, moderate temperatures"
+                    season = "Spring"
                 elif current_month in [6, 7, 8]:
                     season = "Summer"
-                    seasonal_factors = "High temperatures, convective activity, humidity"
                 else:
                     season = "Autumn"
-                    seasonal_factors = "Cooling trends, transitional weather, stable systems"
                 
-                # Broadcast progress
-                self._broadcast_agent_status('meteorological', 'running', 0.6, 
-                                           "Analyzing atmospheric conditions...")
-                
-                # Analyze atmospheric conditions
                 conditions = state['current_conditions']
                 temp = conditions.get('temperature', 20)
                 humidity = conditions.get('humidity', 60)
+                wind_speed = conditions.get('wind_speed', 2.0)
                 
-                # Simple meteorological assessment
-                if temp > 25 and humidity > 70:
-                    conditions_assessment = "High heat and humidity - thunderstorm potential"
-                elif temp < 5 and humidity > 80:
-                    conditions_assessment = "Cold and humid - precipitation likely"
-                elif temp > 15 and humidity < 40:
-                    conditions_assessment = "Warm and dry - stable conditions"
+                # WEEK 3 ENHANCEMENT: Use Qwen3 CoT for expert meteorological analysis
+                if self.lm_studio_service and self.lm_studio_service.available:
+                    self._broadcast_agent_status('meteorological', 'running', 0.4, 
+                                               "Analyzing with Qwen3 meteorological expertise...")
+                    
+                    # Get pattern analysis context
+                    pattern_info = state.get('analysis_results', {}).get('pattern_analysis', {})
+                    patterns_found = pattern_info.get('patterns_found', 0)
+                    
+                    cot_prompt = f"""Meteorologist analysis: {state['location']}, {season}, {state['prediction_days']}-day window.
+Now: {temp}°C, {humidity}% RH, {wind_speed} m/s. Historical matches: {patterns_found} (confidence {state.get('rag_confidence',0.0):.2f}).
+
+In 2-3 sentences: expected conditions, temperature range, main hazard. End with confidence (0.0-1.0)."""
+
+                    try:
+                        messages = [{"role": "user", "content": cot_prompt}]
+                        ai_analysis = self.lm_studio_service.generate_chat(messages, max_tokens=400, temperature=0.3)
+                        
+                        # Extract confidence from analysis
+                        import re
+                        conf_match = re.search(r'confidence[:\s]+([0-9.]+)', ai_analysis.lower())
+                        expert_confidence = float(conf_match.group(1)) if conf_match else 0.85
+                        
+                        # Extract key insights
+                        conditions_assessment = ai_analysis[:200] + "..." if len(ai_analysis) > 200 else ai_analysis
+                        
+                        meteorological_analysis = {
+                            'season': season,
+                            'ai_analysis': ai_analysis,
+                            'conditions_assessment': conditions_assessment,
+                            'expert_confidence': min(0.95, expert_confidence),
+                            'analysis_method': 'qwen3_cot'
+                        }
+                        
+                        logger.info(f"✅ Meteorological CoT analysis: {len(ai_analysis)} chars, confidence: {expert_confidence:.2f}")
+                        
+                    except Exception as cot_error:
+                        logger.warning(f"⚠️ Qwen3 meteorological analysis failed, using fallback: {cot_error}")
+                        # Fallback to programmatic analysis
+                        if temp > 25 and humidity > 70:
+                            conditions_assessment = "High heat and humidity - thunderstorm potential"
+                        elif temp < 5 and humidity > 80:
+                            conditions_assessment = "Cold and humid - precipitation likely"
+                        elif temp > 15 and humidity < 40:
+                            conditions_assessment = "Warm and dry - stable conditions"
+                        else:
+                            conditions_assessment = "Moderate conditions - typical patterns expected"
+                        
+                        meteorological_analysis = {
+                            'season': season,
+                            'conditions_assessment': conditions_assessment,
+                            'expert_confidence': 0.65,
+                            'analysis_method': 'fallback'
+                        }
                 else:
-                    conditions_assessment = "Moderate conditions - typical patterns expected"
-                
-                meteorological_analysis = {
-                    'season': season,
-                    'seasonal_factors': seasonal_factors,
-                    'conditions_assessment': conditions_assessment,
-                    'expert_confidence': 0.8
-                }
+                    # Fallback if LM Studio unavailable
+                    self._broadcast_agent_status('meteorological', 'running', 0.6, 
+                                               "Using fallback meteorological analysis...")
+                    
+                    if temp > 25 and humidity > 70:
+                        conditions_assessment = "High heat and humidity - thunderstorm potential"
+                    elif temp < 5 and humidity > 80:
+                        conditions_assessment = "Cold and humid - precipitation likely"
+                    elif temp > 15 and humidity < 40:
+                        conditions_assessment = "Warm and dry - stable conditions"
+                    else:
+                        conditions_assessment = "Moderate conditions - typical patterns expected"
+                    
+                    meteorological_analysis = {
+                        'season': season,
+                        'conditions_assessment': conditions_assessment,
+                        'expert_confidence': 0.65,
+                        'analysis_method': 'fallback'
+                    }
                 
                 state['analysis_results']['meteorological'] = meteorological_analysis
-                state['agent_reports']['meteorologist'] = f"✅ {season} analysis: {conditions_assessment}"
+                state['agent_reports']['meteorologist'] = f"✅ {season} analysis: {meteorological_analysis.get('conditions_assessment', 'Analysis complete')[:100]} (method: {meteorological_analysis.get('analysis_method', 'unknown')})"
                 
                 # Broadcast completion
                 self._broadcast_agent_status('meteorological', 'completed', 1.0, 
-                                           f"Meteorological analysis completed - {season}: {conditions_assessment}",
-                                           data=meteorological_analysis)
+                                           f"Meteorological analysis completed - {season}, {meteorological_analysis.get('analysis_method', 'unknown')}",
+                                           data={'season': season, 'confidence': meteorological_analysis.get('expert_confidence', 0.65), 'method': meteorological_analysis.get('analysis_method', 'unknown')})
                 
                 return state
                 
@@ -356,19 +455,19 @@ class LangGraphWeatherService:
                 return state
         
         def confidence_assessment_agent(state: WeatherAnalysisState) -> WeatherAnalysisState:
-            """Agent responsible for assessing prediction confidence"""
-            logger.info("🎯 Confidence Assessment Agent: Evaluating prediction reliability")
+            """Agent responsible for assessing prediction confidence with Qwen3 CoT"""
+            logger.info("🎯 Confidence Assessment Agent: Evaluating prediction reliability with AI reasoning")
             
             # Broadcast agent start
             self._broadcast_agent_status('confidence_assessment', 'running', 0.1, 
-                                       "Starting confidence assessment...")
+                                       "Starting AI-powered confidence assessment...")
             
             try:
                 # Broadcast progress
-                self._broadcast_agent_status('confidence_assessment', 'running', 0.3, 
-                                           "Evaluating data quality factors...")
+                self._broadcast_agent_status('confidence_assessment', 'running', 0.2, 
+                                           "Collecting confidence factors...")
                 
-                # Calculate overall confidence based on multiple factors
+                # Calculate base confidence from multiple factors
                 confidence_factors = {
                     'data_quality': 0.0,
                     'pattern_match': state.get('rag_confidence', 0.0),
@@ -393,36 +492,117 @@ class LangGraphWeatherService:
                 else:
                     confidence_factors['service_availability'] = 0.4
                 
-                # Calculate weighted average confidence
+                # Calculate initial weighted average confidence
                 weights = {'data_quality': 0.3, 'pattern_match': 0.3, 'meteorological_expertise': 0.2, 'service_availability': 0.2}
-                overall_confidence = sum(confidence_factors[factor] * weights[factor] for factor in weights)
+                base_confidence = sum(confidence_factors[factor] * weights[factor] for factor in weights)
                 
-                # Broadcast progress
-                self._broadcast_agent_status('confidence_assessment', 'running', 0.7, 
-                                           "Calculating overall confidence score...")
-                
-                # Determine confidence level
-                if overall_confidence >= 0.8:
-                    confidence_level = "High"
-                elif overall_confidence >= 0.6:
-                    confidence_level = "Medium"
-                elif overall_confidence >= 0.4:
-                    confidence_level = "Low"
+                # WEEK 3 ENHANCEMENT: Use Qwen3 CoT for confidence evaluation
+                if self.lm_studio_service and self.lm_studio_service.available:
+                    self._broadcast_agent_status('confidence_assessment', 'running', 0.5, 
+                                               "Evaluating confidence with Qwen3 reasoning...")
+                    
+                    # Get agent reports for context
+                    agent_reports = state.get('agent_reports', {})
+                    pattern_analysis = state.get('analysis_results', {}).get('pattern_analysis', {})
+                    meteorological = state.get('analysis_results', {}).get('meteorological', {})
+                    
+                    cot_prompt = f"""Confidence rating for {state['location']} {state['prediction_days']}-day forecast.
+Base: {base_confidence:.2f} | Data: {data_quality} | Patterns: {pattern_analysis.get('patterns_found',0)} ({pattern_analysis.get('confidence',0.0):.2f}) | Expert: {meteorological.get('expert_confidence',0.0):.2f}
+
+Reply ONLY: High/Medium/Low and final score (0.0-1.0). One sentence reason."""
+
+                    try:
+                        messages = [{"role": "user", "content": cot_prompt}]
+                        ai_assessment = self.lm_studio_service.generate_chat(messages, max_tokens=300, temperature=0.3)
+                        
+                        # Extract final confidence from AI assessment
+                        import re
+                        final_conf_match = re.search(r'final[^0-9]*confidence[:\s]+([0-9.]+)', ai_assessment.lower())
+                        if final_conf_match:
+                            overall_confidence = min(0.98, float(final_conf_match.group(1)))
+                        else:
+                            # Look for any confidence mention
+                            conf_match = re.search(r'confidence[:\s]+([0-9.]+)', ai_assessment.lower())
+                            overall_confidence = float(conf_match.group(1)) if conf_match else base_confidence
+                        
+                        # Extract confidence level from AI or calculate
+                        if "high" in ai_assessment.lower() and "confidence" in ai_assessment.lower():
+                            confidence_level = "High"
+                        elif "medium" in ai_assessment.lower():
+                            confidence_level = "Medium"
+                        elif "very low" in ai_assessment.lower():
+                            confidence_level = "Very Low"
+                        elif "low" in ai_assessment.lower():
+                            confidence_level = "Low"
+                        else:
+                            # Fallback to numeric classification
+                            if overall_confidence >= 0.8:
+                                confidence_level = "High"
+                            elif overall_confidence >= 0.6:
+                                confidence_level = "Medium"
+                            elif overall_confidence >= 0.4:
+                                confidence_level = "Low"
+                            else:
+                                confidence_level = "Very Low"
+                        
+                        confidence_analysis = {
+                            'overall_score': overall_confidence,
+                            'confidence_level': confidence_level,
+                            'factors': confidence_factors,
+                            'ai_reasoning': ai_assessment[:400] if ai_assessment else "No AI reasoning",
+                            'method': 'qwen3_cot'
+                        }
+                        
+                        logger.info(f"✅ Confidence CoT assessment: {confidence_level} ({overall_confidence:.2f})")
+                        
+                    except Exception as cot_error:
+                        logger.warning(f"⚠️ Qwen3 confidence assessment failed, using base calculation: {cot_error}")
+                        # Fallback to base confidence
+                        overall_confidence = base_confidence
+                        if overall_confidence >= 0.8:
+                            confidence_level = "High"
+                        elif overall_confidence >= 0.6:
+                            confidence_level = "Medium"
+                        elif overall_confidence >= 0.4:
+                            confidence_level = "Low"
+                        else:
+                            confidence_level = "Very Low"
+                        
+                        confidence_analysis = {
+                            'overall_score': overall_confidence,
+                            'confidence_level': confidence_level,
+                            'factors': confidence_factors,
+                            'method': 'fallback'
+                        }
                 else:
-                    confidence_level = "Very Low"
+                    # Fallback if LM Studio unavailable
+                    self._broadcast_agent_status('confidence_assessment', 'running', 0.7, 
+                                               "Using fallback confidence calculation...")
+                    overall_confidence = base_confidence
+                    if overall_confidence >= 0.8:
+                        confidence_level = "High"
+                    elif overall_confidence >= 0.6:
+                        confidence_level = "Medium"
+                    elif overall_confidence >= 0.4:
+                        confidence_level = "Low"
+                    else:
+                        confidence_level = "Very Low"
+                    
+                    confidence_analysis = {
+                        'overall_score': overall_confidence,
+                        'confidence_level': confidence_level,
+                        'factors': confidence_factors,
+                        'method': 'fallback'
+                    }
                 
                 state['confidence_score'] = overall_confidence
-                state['analysis_results']['confidence'] = {
-                    'overall_score': overall_confidence,
-                    'confidence_level': confidence_level,
-                    'factors': confidence_factors
-                }
-                state['agent_reports']['confidence_assessor'] = f"✅ Confidence: {confidence_level} ({overall_confidence:.2f})"
+                state['analysis_results']['confidence'] = confidence_analysis
+                state['agent_reports']['confidence_assessor'] = f"✅ Confidence: {confidence_level} ({overall_confidence:.2f}, method: {confidence_analysis.get('method', 'unknown')})"
                 
                 # Broadcast completion
                 self._broadcast_agent_status('confidence_assessment', 'completed', 1.0, 
                                            f"Confidence assessment completed - {confidence_level} ({overall_confidence:.2f})",
-                                           data={'confidence_level': confidence_level, 'score': overall_confidence, 'factors': confidence_factors})
+                                           data={'confidence_level': confidence_level, 'score': overall_confidence, 'factors': confidence_factors, 'method': confidence_analysis.get('method', 'unknown')})
                 
                 return state
                 
@@ -437,12 +617,12 @@ class LangGraphWeatherService:
                 return state
         
         def prediction_generator_agent(state: WeatherAnalysisState) -> WeatherAnalysisState:
-            """Agent responsible for generating the final prediction"""
-            logger.info("🌟 Prediction Generator Agent: Creating final forecast")
+            """Agent responsible for generating the final prediction with Qwen3 CoT"""
+            logger.info("🌟 Prediction Generator Agent: Creating final forecast with AI reasoning")
             
             # Broadcast agent start
             self._broadcast_agent_status('prediction_generator', 'running', 0.1, 
-                                       "Starting prediction generation...")
+                                       "Starting AI-powered prediction generation...")
             
             try:
                 # Compile all analysis for prediction generation
@@ -450,14 +630,76 @@ class LangGraphWeatherService:
                 days = state['prediction_days']
                 current_conditions = state['current_conditions']
                 patterns = state['historical_patterns']
+                pattern_analysis = state.get('analysis_results', {}).get('pattern_analysis', {})
                 meteorological = state.get('analysis_results', {}).get('meteorological', {})
                 confidence = state.get('analysis_results', {}).get('confidence', {})
                 
                 # Broadcast progress
-                self._broadcast_agent_status('prediction_generator', 'running', 0.3, 
-                                           "Trying LangChain + RAG prediction...")
-                
-                # Try LangChain + RAG first
+                self._broadcast_agent_status('prediction_generator', 'running', 0.2,
+                                           "Generating Qwen3 CoT structured prediction...")
+
+                # PRIMARY: Qwen3 CoT JSON prediction (exact day count, structured)
+                if self.lm_studio_service and self.lm_studio_service.available:
+                    try:
+                        confidence_info = f"{confidence.get('confidence_level', 'Medium')} ({confidence.get('overall_score', 0.5):.2f})"
+                        meteorological_info = meteorological.get('conditions_assessment', 'Standard conditions')
+                        if meteorological.get('ai_analysis'):
+                            meteorological_info = meteorological['ai_analysis'][:120]
+
+                        # Build explicit day-by-day placeholder so model knows exactly how many to emit
+                        day_template = ',\n    '.join(
+                            f'{{"day": {i+1}, "date": "YYYY-MM-DD", "temperature_c": 0.0, "humidity_percent": 0.0, "wind_speed_kmh": 0.0, "conditions": "...", "precipitation_chance": 0.0, "confidence": "medium"}}'
+                            for i in range(days)
+                        )
+                        cot_prompt = f"""You are a JSON weather forecast API for {location}.
+Season: {meteorological.get('season','unknown')}. Now: {current_conditions.get('temperature','N/A')}°C, {current_conditions.get('humidity','N/A')}% RH.
+Context: {meteorological_info[:100]}
+
+Return ONLY valid JSON with EXACTLY {days} entries. Fill real values; dates start {__import__('datetime').date.today() + __import__('datetime').timedelta(days=1)}:
+{{
+  "location": "{location}",
+  "predictions": [
+    {day_template}
+  ]
+}}"""
+
+                        messages = [
+                            {"role": "system", "content": f"You are a weather forecast JSON API. Output ONLY a raw JSON object — no markdown fences, no explanation. The predictions array MUST have exactly {days} objects.\n/no_think"},
+                            {"role": "user", "content": cot_prompt}
+                        ]
+                        # Scale tokens and timeout with day count so Qwen3 can always finish.
+                        # ~75 output tokens per day + 250 wrapper; cap at 1500.
+                        # Observed Qwen3-14B speed: ~1 token per 0.15s → add 30s overhead.
+                        _max_tok = max(600, min(days * 75 + 250, 1500))
+                        _call_timeout = max(90, int(_max_tok * 0.15) + 30)
+                        # For 7+ day requests, clear LM Studio's KV cache first to prevent
+                        # generation stalls caused by cache pressure (2021/2172 MiB used).
+                        _clear_cache = days >= 7
+                        logger.info(f"🎯 Qwen3 CoT prediction: {days} days, max_tokens={_max_tok}, timeout={_call_timeout}s, clear_cache={_clear_cache}")
+
+                        prediction = self.lm_studio_service.generate_chat(
+                            messages, _max_tok, 0.1,
+                            request_timeout=_call_timeout,
+                            clear_cache=_clear_cache
+                        )
+
+                        if prediction and len(prediction) > 50:
+                            state['final_prediction'] = prediction
+                            state['method_used'] = "LangGraph + Qwen3 CoT Multi-Agent"
+                            state['agent_reports']['prediction_generator'] = f"✅ Qwen3 CoT prediction successful ({len(prediction)} chars)"
+                            self._broadcast_agent_status('prediction_generator', 'completed', 1.0,
+                                                       f"Qwen3 CoT prediction successful - {len(prediction)} characters",
+                                                       data={'method': 'Qwen3 CoT', 'length': len(prediction)})
+                            logger.info(f"✅ Qwen3 CoT prediction generated: {len(prediction)} characters")
+                            return state
+                        else:
+                            logger.warning(f"⚠️ Qwen3 CoT prediction insufficient: {len(prediction) if prediction else 0} chars — trying LangChain fallback")
+                    except Exception as lm_error:
+                        logger.warning(f"⚠️ Qwen3 CoT prediction failed: {lm_error}")
+
+                # FALLBACK: LangChain + RAG
+                self._broadcast_agent_status('prediction_generator', 'running', 0.6,
+                                           "Falling back to LangChain + RAG prediction...")
                 if self.langchain_service and self.langchain_service.available:
                     try:
                         result = self.langchain_service.predict_weather_langchain_rag(location, days)
@@ -465,54 +707,28 @@ class LangGraphWeatherService:
                             state['final_prediction'] = result['prediction']
                             state['method_used'] = "LangGraph + LangChain + RAG"
                             state['agent_reports']['prediction_generator'] = "✅ LangChain + RAG prediction successful"
-                            
-                            # Broadcast success
-                            self._broadcast_agent_status('prediction_generator', 'completed', 1.0, 
+                            self._broadcast_agent_status('prediction_generator', 'completed', 1.0,
                                                        "LangChain + RAG prediction successful",
                                                        data={'method': 'LangChain + RAG'})
                             return state
                     except Exception as langchain_error:
                         logger.warning(f"⚠️ LangChain prediction failed: {langchain_error}")
                 
-                # Broadcast progress
-                self._broadcast_agent_status('prediction_generator', 'running', 0.6, 
-                                           "Trying Local LLM prediction...")
-                
-                # Fallback to LM Studio
-                if self.lm_studio_service and self.lm_studio_service.available:
-                    try:
-                        # Build comprehensive prompt
-                        prompt = self._build_comprehensive_prompt(state)
-                        prediction = self.lm_studio_service.generate_weather_prediction(prompt, max_tokens=1500)
-                        
-                        if prediction:
-                            state['final_prediction'] = prediction
-                            state['method_used'] = "LangGraph + Local LLM"
-                            state['agent_reports']['prediction_generator'] = "✅ Local LLM prediction successful"
-                            
-                            # Broadcast success
-                            self._broadcast_agent_status('prediction_generator', 'completed', 1.0, 
-                                                       "Local LLM prediction successful",
-                                                       data={'method': 'Local LLM'})
-                            return state
-                    except Exception as lm_error:
-                        logger.warning(f"⚠️ Local LLM prediction failed: {lm_error}")
-                
-                # Broadcast progress
+                # Final fallback: Statistical prediction
                 self._broadcast_agent_status('prediction_generator', 'running', 0.9, 
-                                           "Generating statistical prediction as fallback...")
+                                           "Generating statistical prediction as final fallback...")
                 
-                # Fallback to statistical prediction
                 statistical_prediction = self._generate_statistical_prediction(state)
                 state['final_prediction'] = statistical_prediction
                 state['method_used'] = "LangGraph + Statistical Analysis"
-                state['agent_reports']['prediction_generator'] = "✅ Statistical prediction generated"
+                state['agent_reports']['prediction_generator'] = "✅ Statistical prediction generated (Qwen3 timed out)"
                 
                 # Broadcast completion
                 self._broadcast_agent_status('prediction_generator', 'completed', 1.0, 
                                            "Statistical prediction generated successfully",
                                            data={'method': 'Statistical Analysis'})
                 
+                logger.warning("⚠️ All AI methods failed, using statistical prediction")
                 return state
                 
             except Exception as e:
@@ -527,60 +743,125 @@ class LangGraphWeatherService:
                 return state
         
         def quality_control_agent(state: WeatherAnalysisState) -> WeatherAnalysisState:
-            """Agent responsible for validating prediction quality"""
-            logger.info("🔍 Quality Control Agent: Validating prediction")
+            """Agent responsible for validating prediction quality with Qwen3 CoT"""
+            logger.info("🔍 Quality Control Agent: Validating prediction with AI reasoning")
             
             # Broadcast agent start
             self._broadcast_agent_status('quality_control', 'running', 0.1, 
-                                       "Starting quality validation...")
+                                       "Starting AI-powered quality validation...")
             
             try:
                 prediction = state.get('final_prediction', '')
-                quality_score = 0.0
                 quality_issues = []
                 
                 # Broadcast progress
-                self._broadcast_agent_status('quality_control', 'running', 0.3, 
-                                           "Checking prediction length and content...")
+                self._broadcast_agent_status('quality_control', 'running', 0.2, 
+                                           "Running basic quality checks...")
+                
+                # Basic quality checks
+                base_quality_score = 0.0
                 
                 # Check prediction length
                 if len(prediction) < 100:
                     quality_issues.append("Prediction too short")
-                    quality_score += 0.1
+                    base_quality_score += 0.1
                 elif len(prediction) > 50:
-                    quality_score += 0.3
+                    base_quality_score += 0.3
                 
                 # Check for location mention
                 if state['location'].lower() in prediction.lower():
-                    quality_score += 0.2
+                    base_quality_score += 0.2
                 else:
                     quality_issues.append("Location not mentioned")
                 
                 # Check for time frame mention  
                 if str(state['prediction_days']) in prediction or 'day' in prediction.lower():
-                    quality_score += 0.2
+                    base_quality_score += 0.2
                 else:
                     quality_issues.append("Time frame not clear")
                 
                 # Check for weather elements
                 weather_elements = ['temperature', 'humidity', 'rain', 'wind', 'cloud', 'sunny', 'storm']
                 elements_found = sum(1 for element in weather_elements if element in prediction.lower())
-                quality_score += min(0.3, elements_found * 0.1)
+                base_quality_score += min(0.3, elements_found * 0.1)
                 
                 if elements_found < 2:
                     quality_issues.append("Insufficient weather details")
                 
-                # Broadcast progress
-                self._broadcast_agent_status('quality_control', 'running', 0.8, 
-                                           "Finalizing quality assessment...")
+                # WEEK 3 ENHANCEMENT: Use Qwen3 CoT for quality validation
+                if self.lm_studio_service and self.lm_studio_service.available and prediction:
+                    self._broadcast_agent_status('quality_control', 'running', 0.5, 
+                                               "Analyzing prediction quality with Qwen3...")
+                    
+                    # Get analysis context
+                    confidence_info = state.get('analysis_results', {}).get('confidence', {})
+                    meteorological = state.get('analysis_results', {}).get('meteorological', {})
+                    
+                    cot_prompt = f"""QC check: {state['prediction_days']}-day forecast for {state['location']}.
+{prediction[:250]}{('...' if len(prediction) > 250 else '')}
+Issues: {', '.join(quality_issues) if quality_issues else 'none'}. Base score: {base_quality_score:.2f}.
+
+Reply ONLY: APPROVED or NEEDS_REVISION, quality score (0.0-1.0), one-sentence reason."""
+
+                    try:
+                        messages = [{"role": "user", "content": cot_prompt}]
+                        ai_qa_analysis = self.lm_studio_service.generate_chat(messages, max_tokens=300, temperature=0.3)
+                        
+                        # Extract quality score from AI analysis
+                        import re
+                        quality_match = re.search(r'quality[^0-9]*score[:\s]+([0-9.]+)', ai_qa_analysis.lower())
+                        if quality_match:
+                            final_quality_score = min(1.0, float(quality_match.group(1)))
+                        else:
+                            # Average base score with AI's implicit assessment
+                            final_quality_score = (base_quality_score + 0.7) / 2 if "good" in ai_qa_analysis.lower() or "approved" in ai_qa_analysis.lower() else base_quality_score
+                        
+                        # Check approval
+                        approved = "approved" in ai_qa_analysis.lower() or "acceptable" in ai_qa_analysis.lower() or final_quality_score >= 0.6
+                        
+                        # Extract additional issues from AI
+                        if "issue" in ai_qa_analysis.lower() or "error" in ai_qa_analysis.lower() or "inconsistenc" in ai_qa_analysis.lower():
+                            ai_issues = re.findall(r'(?:issue|error|problem)[:\s]+([^.]+)', ai_qa_analysis.lower())
+                            quality_issues.extend(ai_issues[:2])  # Add up to 2 AI-found issues
+                        
+                        quality_assessment = {
+                            'quality_score': final_quality_score,
+                            'approved': approved,
+                            'issues_found': quality_issues,
+                            'ai_reasoning': ai_qa_analysis[:400] if ai_qa_analysis else "No AI reasoning",
+                            'method': 'qwen3_cot'
+                        }
+                        
+                        logger.info(f"✅ Quality CoT validation: score {final_quality_score:.2f}, approved: {approved}")
+                        
+                    except Exception as cot_error:
+                        logger.warning(f"⚠️ Qwen3 quality validation failed, using base score: {cot_error}")
+                        final_quality_score = base_quality_score
+                        quality_assessment = {
+                            'quality_score': final_quality_score,
+                            'approved': final_quality_score >= 0.5,
+                            'issues_found': quality_issues,
+                            'method': 'fallback'
+                        }
+                else:
+                    # Fallback if LM Studio unavailable
+                    self._broadcast_agent_status('quality_control', 'running', 0.8, 
+                                               "Using fallback quality validation...")
+                    final_quality_score = base_quality_score
+                    quality_assessment = {
+                        'quality_score': final_quality_score,
+                        'approved': final_quality_score >= 0.5,
+                        'issues_found': quality_issues,
+                        'method': 'fallback'
+                    }
                 
-                state['quality_score'] = quality_score
-                state['agent_reports']['quality_controller'] = f"✅ Quality score: {quality_score:.2f}, Issues: {len(quality_issues)}"
+                state['quality_score'] = final_quality_score
+                state['agent_reports']['quality_controller'] = f"✅ Quality: {final_quality_score:.2f}, Issues: {len(quality_issues)}, Approved: {quality_assessment.get('approved', False)} (method: {quality_assessment.get('method', 'unknown')})"
                 
                 # Broadcast completion
                 self._broadcast_agent_status('quality_control', 'completed', 1.0, 
-                                           f"Quality validation completed - Score: {quality_score:.2f}",
-                                           data={'quality_score': quality_score, 'issues_count': len(quality_issues)})
+                                           f"Quality validation completed - Score: {final_quality_score:.2f}, Approved: {quality_assessment.get('approved', False)}",
+                                           data={'quality_score': final_quality_score, 'issues_count': len(quality_issues), 'approved': quality_assessment.get('approved', False), 'method': quality_assessment.get('method', 'unknown')})
                 
                 return state
                 
@@ -785,29 +1066,42 @@ Generate a detailed, day-by-day forecast with scientific reasoning and confidenc
         return prompt
     
     def _generate_statistical_prediction(self, state: WeatherAnalysisState) -> str:
-        """Generate statistical fallback prediction"""
+        """Generate statistical fallback prediction as JSON so the frontend renders day cards"""
+        import json as _json
+        import datetime as _dt
         location = state['location']
         days = state['prediction_days']
         conditions = state['current_conditions']
+        patterns = state.get('historical_patterns', {})
+
+        base_temp = conditions.get('temperature', 15.0)
+        base_humidity = conditions.get('humidity', 65.0)
+        base_wind = (conditions.get('wind_speed', 3.0) or 0) * 3.6  # m/s → km/h
         
-        return f"""📊 **Statistical Weather Forecast for {location}**
-
-**{days}-Day Forecast (Statistical Analysis):**
-
-Based on current conditions and seasonal patterns:
-
-**Current Conditions:**
-• Temperature: {conditions.get('temperature', 'N/A')}°C
-• Humidity: {conditions.get('humidity', 'N/A')}%
-• Wind Speed: {conditions.get('wind_speed', 'N/A')} m/s
-
-**Forecast Trend:**
-Days 1-{min(3, days)}: Similar conditions expected with normal daily variations
-{"Days 4-" + str(days) + ": Gradual seasonal adjustment" if days > 3 else ""}
-
-**Confidence:** Medium (based on statistical patterns)
-
-**Note:** This prediction is generated using statistical analysis. For enhanced accuracy, ensure AI services are available."""
+        start_date = _dt.date.today() + _dt.timedelta(days=1)
+        daily_conds = ['Partly cloudy', 'Mostly clear', 'Cloudy', 'Partly cloudy', 'Clear', 'Overcast', 'Partly cloudy']
+        
+        prediction_list = []
+        for i in range(days):
+            d = start_date + _dt.timedelta(days=i)
+            temp_variation = (i % 3 - 1) * 1.2
+            precip = 20 + (i % 4) * 10
+            prediction_list.append({
+                "day": i + 1,
+                "date": d.isoformat(),
+                "temperature_c": round(base_temp + temp_variation, 1),
+                "humidity_percent": round(base_humidity + (i % 3) * 2, 1),
+                "wind_speed_kmh": round(base_wind + (i % 2) * 2, 1),
+                "conditions": daily_conds[i % len(daily_conds)],
+                "precipitation_chance": precip,
+                "confidence": "low"
+            })
+        
+        return _json.dumps({
+            "location": location,
+            "predictions": prediction_list,
+            "analysis": "Statistical forecast based on current conditions and seasonal patterns. AI service timed out."
+        }, indent=2)
     
     def predict_weather_with_langgraph(self, location: str = "Tokyo", prediction_days: int = 3, workflow_id: str = None) -> Dict[str, Any]:
         """

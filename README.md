@@ -1,6 +1,6 @@
 # 🌤️ Advanced Flask Weather Prediction App
 
-A comprehensive Flask application featuring cutting-edge AI-powered weather prediction with multiple intelligence models including LangChain + RAG orchestration, local LLM integration via LM Studio, and advanced pattern recognition.
+A comprehensive Flask application featuring cutting-edge AI-powered weather prediction with a **LangGraph 5-agent multi-agent system**, LangChain + RAG orchestration, Qwen3-14B local LLM via LM Studio, circuit breakers, rate limiting, prompt-injection protection, ML observability, and structured day-card forecasts for 3–14 days.
 
 ![Weather Prediction Dashboard](Weather.png)
 
@@ -8,38 +8,47 @@ A comprehensive Flask application featuring cutting-edge AI-powered weather pred
 
 This application combines traditional web development with modern AI technologies to provide intelligent weather predictions. The system features:
 
-- **🧠 Multiple AI Prediction Methods**: LangChain + RAG, Local LLM via LM Studio, Hybrid Intelligence
-- **📚 RAG (Retrieval-Augmented Generation)**: Historical weather pattern retrieval from ChromaDB vector store
-- **🏠 Local LLM Integration**: LM Studio API support for privacy-focused predictions
-- **🔐 Complete Authentication System**: Session-based auth with CSRF protection
-- **📊 Historical Data Analysis**: 274+ weather records with intelligent pattern matching
-- **⚡ Real-time Predictions**: Multiple fallback methods ensuring reliability
-- **🎯 Interactive Dashboard**: Modern Bootstrap 5 UI with dynamic method selection
+- **🕸️ LangGraph Multi-Agent System**: 5 specialized AI agents (Data Collector → Pattern Analyzer → Meteorologist → Confidence Assessor → Prediction Generator) collaborate for maximum forecast accuracy
+- **🧠 Qwen3-14B Local LLM**: Chain-of-thought JSON forecasting via LM Studio — 3–14 day structured day cards, all AI-generated
+- **📚 RAG (Retrieval-Augmented Generation)**: Historical weather pattern retrieval from ChromaDB with 263 local embeddings
+- **🏠 LangChain + RAG Orchestration**: Advanced multi-step reasoning with conversation memory
+- **🔐 Complete Authentication System**: Session-based auth, CSRF protection, token-bucket rate limiting, prompt-injection protection
+- **🛡️ Circuit Breakers**: Fault isolation for LM Studio, RAG, LangGraph, and Ensemble services
+- **📊 ML Observability**: Per-request JSONL tracing, rolling p50/p95/p99 latency, success rate, cache-hit rate
+- **⚡ Real-time Predictions**: WebSocket agent monitoring + multi-layer fallbacks ensuring reliability
+- **🎯 Structured Day Cards**: Server-side JSON parsing renders emoji day cards for every forecast length
 
 ## 🌟 Key Features
 
 ### Weather Prediction Capabilities
-- **LangChain + RAG Orchestration**: Advanced chain-of-thought reasoning with historical pattern retrieval
-- **Local LLM Integration**: Privacy-focused predictions using LM Studio (llama-3.2-3b-instruct)
-- **RAG-Enhanced Predictions**: ChromaDB vector store with 274+ historical weather patterns
-- **Hybrid Smart Fallbacks**: Intelligent degradation from AI to statistical methods
-- **Statistical Analysis**: Mathematical baseline predictions as reliable fallback
-- **Pattern Search**: Semantic search through historical weather data
+- **🕸️ LangGraph 5-Agent Pipeline**: Data Collector → Pattern Analyzer → Meteorologist → Confidence Assessor → Prediction Generator, all coordinated by LangGraph state machines
+- **🧠 Qwen3-14B CoT Forecasting**: Structured JSON output with scaled `max_tokens` and timeout per day count (3d=90s, 7d=146s, 10d=180s, 14d=225s)
+- **🗂️ KV Cache Management**: `clear_prompt_cache()` erases LM Studio slots before large requests, preventing generation stalls from cache pressure
+- **📚 LangChain + RAG Orchestration**: Advanced chain-of-thought reasoning with conversation memory and historical pattern retrieval
+- **🔄 Graceful Multi-Layer Fallbacks**: Qwen3 CoT → LangChain + RAG → Statistical JSON (always returns structured day cards)
+- **🔍 Multi-Query RAG**: Multiple query expansion for richer historical pattern retrieval
+- **📊 Electricity Load ML Model**: GradientBoosting PKL model (R²=0.9227, MAPE=2.74%) for energy demand prediction
 
-### Technical Infrastructure
-- **Session-based Authentication**: Secure login/logout with session management
-- **CSRF Protection**: Built-in protection against cross-site request forgery
-- **MySQL Database**: XAMPP-compatible with automatic setup scripts
-- **Vector Database**: ChromaDB for efficient similarity search
-- **Error Handling**: Comprehensive timeout and fallback management
-- **API Architecture**: RESTful endpoints with detailed status reporting
+### Security & Reliability
+- **🔐 `@require_auth` Decorator**: Single decorator replaces 21 copy-pasted session checks
+- **⏱️ Token Bucket Rate Limiter**: Anonymous 10 req/hr, authenticated 60 req/hr, RFC-compliant headers
+- **🛡️ Prompt Injection Protection**: 18 block patterns, location/query/output sanitization
+- **🔌 Circuit Breakers**: 4 named breakers (LM Studio, RAG, LangGraph, Ensemble) — open circuits return immediately instead of blocking
+- **🔑 Password Hash Fix**: `String(256)` column prevents scrypt hash truncation that silently broke all logins
+- **🛡️ CSRF**: Correct instance exemption applied to all API blueprints
+
+### Observability & Infrastructure
+- **📈 ML Observability**: Per-request JSONL tracing with `trace_id`, latency, method, cache-hit, fallback flags
+- **📊 Live Metrics Endpoint**: Rolling p50/p95/p99 latency + success rate at `GET /api/monitoring/dashboard`
+- **🌐 WebSocket Agent Monitor**: Real-time LangGraph agent progress streamed to frontend via Flask-SocketIO
+- **🗂️ Pydantic v2 Schemas**: Typed request/response validation with automatic fallback
 
 ### User Experience
-- **Modern UI**: Bootstrap 5 responsive design
-- **Method Selection**: Interactive dropdown for choosing prediction approach
-- **Real-time Feedback**: Loading indicators and status updates
-- **Detailed Results**: Confidence levels and method explanations
-- **Error Guidance**: Helpful messages for timeout and service issues
+- **🃏 Structured Day Cards**: Every forecast (3–14 days) renders emoji + temperature + humidity + wind + confidence badge — never raw JSON
+- **Modern UI**: Bootstrap 5 responsive design with agent insight panels
+- **Method Selection**: Interactive dropdown covering all 9 prediction endpoints
+- **Real-time Feedback**: WebSocket-powered agent status updates during LangGraph predictions
+- **Detailed Results**: Per-day confidence levels, precipitation bars, analysis blocks
 
 ## 📋 Prerequisites
 
@@ -51,9 +60,10 @@ This application combines traditional web development with modern AI technologie
 
 ### LM Studio Setup (Optional - for Local LLM)
 1. **Download LM Studio** from [https://lmstudio.ai/](https://lmstudio.ai/)
-2. **Install a compatible model** (recommended: llama-3.2-3b-instruct)
+2. **Install Qwen3-14B** (`qwen/qwen3-14b`) — the model the app is optimised for. Alternatives: Qwen2.5-14B, Mistral-7B
 3. **Start the Local Server** in LM Studio
-4. **Configure API endpoint** at `http://127.0.0.1:1239` (default)
+4. **Configure API endpoint** at `http://127.0.0.1:1234` (default)
+5. **Recommended RAM**: 16 GB+ for Qwen3-14B; 8 GB minimum for Qwen2.5-7B
 
 ### Google AI API (Optional - for Gemini AI)
 1. **Get API Key** from [Google AI Studio](https://makersuite.google.com/app/apikey)
@@ -87,30 +97,43 @@ The setup script will:
 
 ```
 📁 Flask-Weather-Prediction-App/
-├── 🐍 app.py                      # Main Flask application
-├── ⚙️ .env                       # Configuration (create from template)
-├── 🗃️ setup_database.py          # Automated MySQL setup
-├── 📋 requirements.txt            # Python dependencies
-├── 📊 data/                      # Weather datasets
-│   └── Generated_electricity_load_japan_past365days.csv
-├── 🔧 backend/                   # Backend services
-│   ├── 🌐 routes.py              # API endpoints (20+ weather endpoints)
-│   ├── 🔐 auth.py                # Authentication system
-│   ├── 🗂️ models.py             # Database models
-│   ├── 🌤️ weather_service.py     # Core weather prediction logic
-│   ├── 🧠 langchain_rag_service.py # LangChain + RAG orchestration
-│   ├── 🏠 lmstudio_service.py    # Local LLM integration
-│   └── 📚 rag_service.py         # Vector database RAG
-├── 🎨 frontend/                  # Web interface
-│   ├── 📄 templates/            # Jinja2 templates
-│   │   ├── 🏠 base.html         # Base template
-│   │   ├── 🔑 login.html        # Authentication
-│   │   ├── 📊 dashboard.html     # User dashboard
-│   │   └── 🌤️ weather_dashboard.html # Weather prediction UI
-│   └── 🎯 static/              # CSS/JS assets
-│       ├── css/main.css         # Styling
-│       └── js/main.js          # Frontend logic
-└── 🗄️ flasking/                # Virtual environment
+├── 🐍 app.py                          # Main Flask application
+├── ⚙️ .env                           # Configuration (create from template)
+├── 🗃️ setup_database.py              # Automated MySQL setup
+├── 📋 requirements.txt                # Python dependencies
+├── 📊 data/                          # Weather datasets & ML models
+│   ├── Generated_electricity_load_japan_past365days.csv
+│   ├── electricity_load_model.pkl     # 🆕 GradientBoosting model (R²=0.9227)
+│   └── vector_db/                    # ChromaDB with 263 local embeddings
+├── 🔧 backend/                       # Backend services
+│   ├── 🌐 routes.py                  # API endpoints (30+ endpoints)
+│   ├── 🔐 auth.py                    # Authentication system
+│   ├── 🛡️ auth_guard.py             # 🆕 @require_auth decorator
+│   ├── ⏱️ rate_limiter.py           # 🆕 Token bucket rate limiter
+│   ├── 🔒 prompt_security.py        # 🆕 Prompt injection protection
+│   ├── 🔌 circuit_breaker.py        # 🆕 4-service circuit breakers
+│   ├── 📈 ml_observability.py       # 🆕 JSONL tracing + p99 metrics
+│   ├── 🗂️ models.py                 # Database models
+│   ├── 🌤️ weather_service.py         # Core weather prediction logic
+│   ├── 🕸️ langgraph_service.py      # 🆕 LangGraph 5-agent pipeline
+│   ├── 🧠 langchain_rag_service.py   # LangChain + RAG orchestration
+│   ├── 🏠 lmstudio_service.py        # Local LLM + cache management
+│   ├── 📚 rag_service.py             # Vector database RAG
+│   ├── ⚡ websocket_service.py       # Real-time agent monitoring
+│   ├── 🎯 ensemble_service.py        # Ensemble prediction service
+│   └── ⚡ electricity_model_service.py # 🆕 PKL model service
+├── 🧪 test_eval_pipeline.py          # 🆕 107-test security/ML suite
+├── 🧪 test_electricity_model.py      # 🆕 26-test PKL model suite
+├── 🎨 frontend/                      # Web interface
+│   ├── 📄 templates/
+│   │   ├── 🏠 base.html
+│   │   ├── 🔑 login.html
+│   │   ├── 📊 dashboard.html
+│   │   └── 🌤️ weather_dashboard.html  # Day-card rendering + WebSocket UI
+│   └── 🎯 static/
+│       ├── css/main.css
+│       └── js/main.js
+└── 🗄️ flasking_py311/               # Python 3.11 virtual environment
 ```
 
 ## 🛠️ Tech Stack
@@ -124,11 +147,13 @@ The setup script will:
 - **💾 MySQL + PyMySQL**: Database with XAMPP support
 
 ### AI & Machine Learning
-- **🧠 LangChain**: Advanced LLM orchestration framework
-- **📚 ChromaDB**: Vector database for RAG operations
-- **🤖 Google Generative AI**: Cloud-based intelligence
-- **🏠 LM Studio API**: Local LLM integration
-- **🔍 Sentence Transformers**: Embeddings for semantic search
+- **🕸️ LangGraph**: Multi-agent state machine orchestration
+- **🧠 LangChain**: Advanced LLM orchestration with conversation memory
+- **🤖 Qwen3-14B via LM Studio**: Local CoT JSON forecasting, `/no_think` optimised
+- **📚 ChromaDB**: Vector database with 263 local embeddings
+- **🔍 Sentence Transformers** (`all-MiniLM-L6-v2`): Local embeddings, no API key required
+- **📊 scikit-learn + joblib**: GradientBoosting electricity load model (R²=0.9227)
+- **🤖 Google Generative AI**: Cloud-based intelligence (optional)
 - **📊 Pandas + NumPy**: Data processing and analysis
 
 ### Frontend Technologies
@@ -138,10 +163,12 @@ The setup script will:
 - **🎯 JavaScript ES6+**: Interactive functionality
 
 ### Infrastructure
+- **⚡ Flask-SocketIO**: WebSocket support for real-time agent monitoring
+- **🔌 Pydantic v2**: Request/response schema validation
 - **🐳 ChromaDB**: Vector storage for pattern matching
 - **🏠 XAMPP**: Local MySQL development
 - **🔧 Python-dotenv**: Environment configuration
-- **📝 Logging**: Comprehensive debug information
+- **📝 Logging + JSONL Tracing**: Per-request traces with `trace_id`, latency, method, fallback flags
 
 ## 🚀 Quick Start Guide
 
@@ -185,8 +212,8 @@ DB_PASSWORD=
 # API Keys (optional)
 GEMINI_API_KEY=your_google_api_key_here
 
-# Local LLM (auto-detected)
-LM_STUDIO_API_URL=http://127.0.0.1:1239
+# Local LLM — default port for LM Studio
+LM_STUDIO_API_URL=http://127.0.0.1:1234
 ```
 
 ### 4️⃣ Launch Application
@@ -211,51 +238,59 @@ python app.py
 
 ## 🌤️ Weather Prediction Methods
 
-### 🧠 LangChain + RAG (Ultimate AI)
-- **Advanced Orchestration**: Multi-step reasoning with conversation memory
-- **Historical Patterns**: Retrieves similar conditions from 274+ weather records
-- **Confidence Assessment**: Built-in prediction reliability scoring
-- **Smart Fallbacks**: Graceful degradation if services unavailable
+### 🕸️ LangGraph Multi-Agent Pipeline (Recommended)
+- **5 Specialised Agents**: Data Collector → Pattern Analyzer → Meteorologist → Confidence Assessor → Prediction Generator
+- **Qwen3-14B CoT**: Structured JSON output with exactly N day objects, rendered as emoji day cards
+- **Scaled Resources**: Token budget and HTTP timeout scale with day count (3d=600 tok/90s → 14d=1300 tok/225s)
+- **KV Cache Clearing**: Frees LM Studio cache before 7+ day requests, preventing mid-generation stalls
+- **WebSocket Monitoring**: Real-time agent progress streamed to the dashboard
+- **Robust Fallbacks**: Qwen3 CoT → LangChain + RAG → Statistical JSON (always returns structured cards)
 
-**Best for**: Most accurate predictions with detailed reasoning
+**Best for**: All forecast lengths (3–14 days), maximum AI quality
+
+### 🧠 LangChain + RAG
+- **Advanced Orchestration**: Multi-step reasoning with conversation memory
+- **Historical Patterns**: Retrieves similar conditions from 263 local embeddings
+- **Confidence Assessment**: Built-in prediction reliability scoring
+- **Multi-Query Expansion**: Multiple query variants for richer retrieval
+
+**Best for**: Historical-pattern-informed predictions
 
 ### 🏠 Local LLM via LM Studio
-- **Complete Privacy**: All processing happens locally
+- **Complete Privacy**: All processing happens locally, no data leaves the machine
 - **No API Limits**: Unlimited predictions without quotas
-- **Customizable Models**: Support for various LLM models
-- **Fast Response**: No network latency for predictions
+- **Qwen3 Optimised**: `/no_think` suppression, `strip_thinking()` post-processing
+- **Circuit Breaker**: Open circuit returns immediately on repeated failures
 
-**Best for**: Privacy-conscious users with local LM Studio setup
+**Best for**: Privacy-conscious users
 
-### 📚 RAG-Enhanced Predictions
-- **Pattern Matching**: Semantic search through historical data
-- **Contextual Awareness**: Understands seasonal and geographical patterns
-- **Data-Driven**: Leverages real weather observations
-- **Vector Similarity**: ChromaDB for efficient pattern retrieval
+### 📊 Statistical Analysis (Always-Available Fallback)
+- **JSON Day Objects**: Returns same structured format as AI methods — renders day cards
+- **Current-Conditions Seeded**: Uses live temperature/humidity/wind as baseline
+- **Seasonal Variation**: Applies daily variation patterns
+- **Zero Dependencies**: No LM Studio, no API keys required
 
-**Best for**: Data-driven predictions with historical context
-
-### 📊 Statistical Analysis
-- **Mathematical Baseline**: Reliable predictions using statistical methods
-- **Trend Analysis**: Temperature, humidity, and wind patterns
-- **Seasonal Awareness**: Accounts for seasonal variations
-- **Always Available**: No external dependencies
-
-**Best for**: Reliable baseline when AI services unavailable
+**Best for**: Reliable baseline when AI services are unavailable
 
 ## 🛡️ Security & Authentication
 
 ### Session-Based Authentication
+- **`@require_auth` Decorator**: Single decorator protects all authenticated routes — replaces 21 copy-pasted session checks
 - **Secure Login/Logout**: Session management with Flask-Login
-- **CSRF Protection**: Built-in protection against cross-site attacks
-- **Password Security**: Bcrypt hashing for password storage
-- **Route Protection**: Authentication required for weather features
+- **CSRF Protection**: Correct instance exemption applied per blueprint
+- **Password Security**: scrypt hashing stored in `String(256)` column (previously truncated at 128, silently breaking all logins)
+- **Route Protection**: Authentication required for all weather features and the monitoring dashboard
 
 ### API Security
-- **Request Validation**: Input sanitization and validation
+- **Token Bucket Rate Limiter**: Anonymous 10 req/hr, authenticated 60 req/hr. Returns `429 Too Many Requests` with RFC-compliant `Retry-After` and `X-RateLimit-*` headers
+- **Prompt Injection Protection**: 18 block patterns catch `ignore all previous instructions`, jailbreak attempts, system-prompt leaks, and role-play attacks. Location and output fields are independently sanitised
+- **Pydantic v2 Schemas**: All prediction requests validated with typed schemas before reaching the AI layer
 - **Error Handling**: Secure error messages without information leakage
-- **Session Timeouts**: Automatic logout for inactive sessions
 - **CORS Configuration**: Controlled cross-origin access
+
+### Fault Isolation
+- **Circuit Breakers** (`backend/circuit_breaker.py`): 4 named breakers — `lm_studio`, `rag`, `langgraph`, `ensemble`. Trips after repeated failures, returns immediately while open, self-resets after cooldown
+- **Multi-Layer Fallbacks**: Every prediction path degrades gracefully — AI failure never surfaces as a 500 error to the user
 
 ## 📊 API Endpoints
 
@@ -278,7 +313,16 @@ python app.py
 | POST | `/api/weather/predict-local` | Local LLM prediction |
 | POST | `/api/weather/predict-rag-local` | RAG + Local LLM |
 | POST | `/api/weather/predict-hybrid` | Hybrid smart fallback |
-| POST | `/api/weather/predict-langchain-rag` | **Ultimate LangChain + RAG** |
+| POST | `/api/weather/predict-langchain-rag` | LangChain + RAG orchestration |
+| POST | `/api/weather/predict-langgraph` | **🆕 LangGraph 5-agent pipeline (3–14 day cards)** |
+| POST | `/api/weather/predict-multiquery-rag` | **🆕 Multi-Query RAG prediction** |
+| POST | `/api/weather/predict-ensemble` | **🆕 Ensemble of all methods** |
+
+All prediction endpoints accept:
+```json
+{ "location": "Tokyo", "timeframe": 7 }
+```
+And return `forecast_days[]` — a pre-parsed array of day objects for direct card rendering.
 
 ### Data & Analysis API
 | Method | Endpoint | Description |
@@ -287,12 +331,14 @@ python app.py
 | GET | `/api/weather/rag-stats` | RAG service statistics |
 | GET | `/api/weather/data-summary` | Weather data overview |
 | GET | `/api/weather/recent-data` | Recent weather observations |
+| GET | `/api/monitoring/dashboard` | **🆕 Live p50/p95/p99 latency + success metrics** |
 
 ### Service Status API
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/api/weather/lm-studio-status` | LM Studio availability |
 | GET | `/api/weather/langchain-rag-status` | LangChain service status |
+| GET | `/api/weather/langgraph-status` | **🆕 LangGraph agent status** |
 | GET | `/api/health` | Overall system health |
 
 ## 🔧 Advanced Configuration
@@ -300,12 +346,14 @@ python app.py
 ### LM Studio Setup
 ```bash
 # 1. Download LM Studio from https://lmstudio.ai/
-# 2. Download a compatible model (recommended):
-#    - llama-3.2-3b-instruct (3GB, fast, good quality)
-#    - mistral-7b-instruct (7GB, excellent quality)
+# 2. Download recommended model:
+#    - qwen/qwen3-14b (14GB, optimised — best results)
+#    - qwen2.5-14b-instruct (14GB, fast alternative)
+#    - mistral-7b-instruct (7GB, lightweight)
 # 3. Start Local Server in LM Studio
-# 4. Verify endpoint: http://127.0.0.1:1239
-# 5. App will auto-detect and enable local features
+# 4. Verify endpoint: http://127.0.0.1:1234
+# 5. App auto-detects the model and applies Qwen3 optimisations
+#    (strips <think> tags, injects /no_think, clears KV cache for 7+ day forecasts)
 ```
 
 ### Google AI Integration
@@ -358,13 +406,22 @@ except Exception as e:
 # ❌ LM Studio not detected
 # 1. Ensure LM Studio is running
 # 2. Start Local Server in LM Studio
-# 3. Check endpoint: http://127.0.0.1:1239/v1/models
-# 4. Load a compatible model (llama-3.2-3b-instruct recommended)
+# 3. Check endpoint: http://127.0.0.1:1234/v1/models
+# 4. Load Qwen3-14B (or compatible model)
 
 # Test LM Studio connectivity
-curl http://127.0.0.1:1239/v1/models
-
+curl http://127.0.0.1:1234/v1/models
 # Should return JSON with available models
+
+# ❌ 7/10/14-day forecast times out or returns wrong day count
+# App automatically clears LM Studio KV cache (POST /slots/{id}/action)
+# before large requests — requires LM Studio >= 0.3.5
+# If on older version, reduce forecast days or restart LM Studio manually
+
+# ❌ <think> tags leaking into output
+# App injects /no_think in every system prompt and sets
+# chat_template_kwargs: {enable_thinking: false} in the payload
+# If still appearing: ensure Qwen3 model is loaded (not Qwen2.5)
 ```
 
 ### AI Service Issues
@@ -399,15 +456,25 @@ pip install -r requirements.txt --force-reinstall --no-cache-dir
 
 ### Running Tests
 ```bash
-# Test individual services
-python test_weather_service.py    # Weather prediction service
-python test_lm_studio.py         # LM Studio connectivity
+# Full evaluation pipeline (107 tests)
+python test_eval_pipeline.py      # auth, rate limiter, circuit breaker,
+                                  # prompt security, validators, observability
 
-# Manual API testing
-curl -X POST http://localhost:5000/api/weather/predict-langchain-rag \
+# Electricity ML model (26 tests)
+python test_electricity_model.py  # artifact structure, metric gates,
+                                  # batch + single-row predictions
+
+# Individual service tests
+python test_weather_service.py    # Weather prediction service
+python test_lm_studio.py          # LM Studio connectivity
+python test_langgraph_week3.py    # LangGraph 5-agent pipeline
+python test_week4_ensemble.py     # Ensemble service
+
+# Manual API testing (all day counts — requires login cookie)
+curl -X POST http://localhost:5000/api/weather/predict-langgraph \
   -H "Content-Type: application/json" \
-  -d '{"location": "Tokyo", "timeframe": 3}' \
-  -b "session=test"
+  -d '{"location": "Tokyo", "timeframe": 7}' \
+  -b cookies.txt
 ```
 
 ### Development Mode
@@ -436,21 +503,28 @@ python app.py  # Will show detailed debug information
 
 ## 🔮 Future Roadmap
 
+### ✅ Completed (Feb 2026)
+- **✅ LangGraph 5-Agent Pipeline**: Full multi-agent weather prediction
+- **✅ Extended Forecasts**: 3–14 day structured day cards, all Qwen3-powered
+- **✅ Ensemble Methods**: Ensemble service combining multiple AI approaches
+- **✅ Rate Limiting + Prompt Security**: Token bucket + 18-pattern injection protection
+- **✅ Circuit Breakers**: Fault isolation for all AI services
+- **✅ ML Observability**: JSONL tracing + rolling p50/p95/p99 metrics
+- **✅ Electricity Load Model**: PKL GradientBoosting (R²=0.9227)
+
 ### Planned Features
-- **🌍 Multi-location Support**: Global weather predictions
-- **📅 Extended Forecasts**: 14-day predictions with uncertainty bands
-- **🎨 Visualization**: Interactive charts and weather maps
+- **🌍 Multi-location Support**: Global weather predictions with location validation
+- **🎨 Visualization**: Interactive temperature/precipitation charts
 - **📱 Mobile App**: React Native companion app
-- **🔔 Alerts**: Custom weather alerts and notifications
-- **📈 Analytics**: User prediction accuracy tracking
-- **🌐 API Gateway**: Public API for third-party integration
+- **🔔 Alerts**: Custom weather threshold alerts
+- **📈 Analytics**: User prediction accuracy tracking dashboard
+- **🌐 API Gateway**: Public API with API-key authentication
 
 ### AI Enhancements
-- **🧠 Model Fine-tuning**: Custom weather prediction models
-- **📊 Ensemble Methods**: Combining multiple AI approaches
-- **🔍 Real-time Data**: Live weather data integration
-- **🎯 Location-specific Models**: Regional weather pattern learning
-- **📝 Natural Language**: Conversational weather queries
+- **🧠 Model Fine-tuning**: Domain-specific weather prediction LoRA adapters
+- **🔍 Real-time Data**: Live weather API integration (JMA, OpenWeatherMap)
+- **🎯 Location-specific Models**: Regional seasonal pattern learning
+- **📝 Natural Language**: Conversational forecast queries via LangGraph
 
 ## 📜 License & Contributing
 
